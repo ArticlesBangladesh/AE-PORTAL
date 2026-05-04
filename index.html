@@ -18,6 +18,7 @@ button{cursor:pointer;}
 @keyframes bounce{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
 @keyframes fadeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
 @keyframes spin{to{transform:rotate(360deg)}}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
 .fade-in{animation:fadeIn .22s ease-out;}
 .sidebar{position:fixed;top:0;left:0;height:100%;z-index:40;transition:transform .3s ease;transform:translateX(-100%);}
 .sidebar.open{transform:translateX(0);}
@@ -58,9 +59,48 @@ const blankSched=()=>{const s={};DAYS.forEach(d=>{s[d]={active:false,startTime:"
 // ── Colours ───────────────────────────────────────────────────────
 const N="#0c1445",AM="#f59e0b",GR="#059669",RE="#ef4444",TE="#0d9488",PU="#7c3aed";
 
+// ── Cloud Sync (JSONBin.io) ────────────────────────────────────────
+const SYNC_KEY="ae_cloudSync";
+const ALL_DATA_KEYS=["ae_students","ae_teachers","ae_attendance","ae_adminAttendance","ae_enrollments","ae_fees","ae_notices","ae_sideIncome","ae_expenses","ae_events","ae_results","ae_settings","ae_archivedStudents","ae_archivedTeachers"];
+
+async function pushToCloud(syncCfg){
+  if(!syncCfg?.apiKey||!syncCfg?.binId)throw new Error("No API key or Bin ID set.");
+  const payload={};
+  ALL_DATA_KEYS.forEach(k=>{payload[k]=dbGet(k,null);});
+  payload._syncedAt=new Date().toISOString();
+  const res=await fetch(`https://api.jsonbin.io/v3/b/${syncCfg.binId}`,{
+    method:"PUT",
+    headers:{"Content-Type":"application/json","X-Master-Key":syncCfg.apiKey},
+    body:JSON.stringify(payload)
+  });
+  if(!res.ok){const e=await res.json();throw new Error(e.message||"Push failed");}
+  return await res.json();
+}
+
+async function pullFromCloud(syncCfg){
+  if(!syncCfg?.apiKey||!syncCfg?.binId)throw new Error("No API key or Bin ID set.");
+  const res=await fetch(`https://api.jsonbin.io/v3/b/${syncCfg.binId}/latest`,{
+    headers:{"X-Master-Key":syncCfg.apiKey}
+  });
+  if(!res.ok){const e=await res.json();throw new Error(e.message||"Pull failed");}
+  const data=await res.json();
+  return data.record;
+}
+
+async function createNewBin(apiKey){
+  const res=await fetch("https://api.jsonbin.io/v3/b",{
+    method:"POST",
+    headers:{"Content-Type":"application/json","X-Master-Key":apiKey,"X-Bin-Name":"ARDENT-Education-Data","X-Bin-Private":"true"},
+    body:JSON.stringify({_init:true,_createdAt:new Date().toISOString()})
+  });
+  if(!res.ok){const e=await res.json();throw new Error(e.message||"Create bin failed");}
+  const data=await res.json();
+  return data.metadata.id;
+}
+
 // ── UI Primitives ─────────────────────────────────────────────────
 const Badge=({children,color="blue"})=>{
-  const m={blue:["#eff6ff","#1d4ed8","#bfdbfe"],green:["#f0fdf4","#059669","#a7f3d0"],red:["#fef2f2","#dc2626","#fecaca"],amber:["#fffbeb","#d97706","#fde68a"],navy:["#eef2ff","#0c1445","#c7d2fe"],gray:["#f9fafb","#4b5563","#e5e7eb"],teal:["#f0fdfa","#0d9488","#99f6e4"],purple:["#faf5ff","#7c3aed","#ddd6fe"],pink:["#fdf2f8","#9d174d","#fbcfe8"]};
+  const m={blue:["#eff6ff","#1d4ed8","#bfdbfe"],green:["#f0fdf4","#059669","#a7f3d0"],red:["#fef2f2","#dc2626","#fecaca"],amber:["#fffbeb","#d97706","#fde68a"],navy:["#eef2ff","#0c1445","#c7d2fe"],gray:["#f9fafb","#4b5563","#e5e7eb"],teal:["#f0fdfa","#0d9488","#99f6e4"],purple:["#faf5ff","#7c3aed","#ddd6fe"],pink:["#fdf2f8","#9d174d","#fbcfe8"],orange:["#fff7ed","#ea580c","#fed7aa"]};
   const[bg,fc,bc]=m[color]||m.blue;
   return <span style={{background:bg,color:fc,border:`1px solid ${bc}`,padding:"2px 10px",borderRadius:999,fontSize:11,fontWeight:700,display:"inline-block",whiteSpace:"nowrap"}}>{children}</span>;
 };
@@ -90,13 +130,13 @@ const FM=({label,options,selected,onChange,req})=><div style={{marginBottom:14}}
     ?<p style={{fontSize:12,color:"#d97706",background:"#fffbeb",borderRadius:8,padding:"8px 12px"}}>⚙️ Add subjects in Settings first.</p>
     :<div style={{display:"flex",flexWrap:"wrap",gap:6}}>{(options||[]).map(o=><button type="button" key={o} onClick={()=>onChange((selected||[]).includes(o)?(selected||[]).filter(s=>s!==o):[...(selected||[]),o])} style={{padding:"5px 11px",borderRadius:7,border:`1.5px solid ${(selected||[]).includes(o)?N:"#e5e7eb"}`,background:(selected||[]).includes(o)?N:"#fff",color:(selected||[]).includes(o)?"#fff":"#6b7280",fontSize:12,fontWeight:700}}>{o}</button>)}</div>}
 </div>;
-const BS={navy:{background:N,color:"#fff"},amber:{background:AM,color:"#fff"},green:{background:GR,color:"#fff"},red:{background:RE,color:"#fff"},ghost:{background:"#f3f4f6",color:"#374151"},teal:{background:TE,color:"#fff"},purple:{background:PU,color:"#fff"}};
+const BS={navy:{background:N,color:"#fff"},amber:{background:AM,color:"#fff"},green:{background:GR,color:"#fff"},red:{background:RE,color:"#fff"},ghost:{background:"#f3f4f6",color:"#374151"},teal:{background:TE,color:"#fff"},purple:{background:PU,color:"#fff"},orange:{background:"#ea580c",color:"#fff"}};
 const Btn=({children,onClick,color="navy",style={},disabled=false,full=false,type="button"})=><button type={type} onClick={onClick} disabled={disabled} style={{padding:"9px 16px",borderRadius:10,border:"none",fontSize:13,fontWeight:700,cursor:disabled?"not-allowed":"pointer",opacity:disabled?.5:1,width:full?"100%":"auto",...(BS[color]||BS.navy),...style}}>{children}</button>;
 const Card=({children,style={}})=><div style={{background:"#fff",borderRadius:16,border:"1px solid #eff0f6",boxShadow:"0 2px 8px rgba(12,20,69,.05)",...style}}>{children}</div>;
 const Empty=({icon,msg})=><div style={{textAlign:"center",padding:"48px 0",color:"#9ca3af"}}><div style={{fontSize:44,marginBottom:10}}>{icon}</div><p style={{fontSize:13}}>{msg}</p></div>;
 const HR=()=><div style={{borderBottom:"1px solid #f5f5f5",margin:"10px 0"}}/>;
 const SHdr=({title,sub,action})=><div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",marginBottom:20,gap:10,flexWrap:"wrap"}}><div><h2 style={{fontWeight:800,color:N,fontSize:22,margin:0}}>{title}</h2>{sub&&<p style={{color:"#9ca3af",fontSize:12,marginTop:2}}>{sub}</p>}</div>{action}</div>;
-const InfoBox=({children,color="amber"})=>{const s={amber:{background:"#fffbeb",border:"1px solid #fde68a",color:"#92400e"},red:{background:"#fef2f2",border:"1px solid #fecaca",color:"#991b1b"},green:{background:"#f0fdf4",border:"1px solid #a7f3d0",color:"#065f46"}};return <div style={{borderRadius:12,padding:14,marginBottom:16,fontSize:13,fontWeight:600,...(s[color]||s.amber)}}>{children}</div>;};
+const InfoBox=({children,color="amber"})=>{const s={amber:{background:"#fffbeb",border:"1px solid #fde68a",color:"#92400e"},red:{background:"#fef2f2",border:"1px solid #fecaca",color:"#991b1b"},green:{background:"#f0fdf4",border:"1px solid #a7f3d0",color:"#065f46"},blue:{background:"#eff6ff",border:"1px solid #bfdbfe",color:"#1e40af"}};return <div style={{borderRadius:12,padding:14,marginBottom:16,fontSize:13,fontWeight:600,...(s[color]||s.amber)}}>{children}</div>;};
 const StatCard=({label,value,icon,from,to})=><div style={{background:`linear-gradient(135deg,${from},${to})`,borderRadius:14,padding:14,color:"#fff"}}>
   <div style={{fontSize:22,marginBottom:4}}>{icon}</div>
   <div style={{fontSize:20,fontWeight:800,lineHeight:1}}>{value}</div>
@@ -127,7 +167,7 @@ function WeeklyScheduleEditor({schedule,onChange}){
   </div>;
 }
 
-// ── Subject-Fees Editor (per student) ────────────────────────────
+// ── Subject-Fees Editor ───────────────────────────────────────────
 function SubjectFeeEditor({assignments,onChange,teachers,subjects}){
   const [tId,setTId]=useState("");
   const [subj,setSubj]=useState("");
@@ -135,7 +175,7 @@ function SubjectFeeEditor({assignments,onChange,teachers,subjects}){
   const avail=useMemo(()=>{if(!tId)return subjects||[];const t=teachers.find(t=>t.id===tId);return(t?.subjects||[]).length?t.subjects:subjects||[];},[tId,teachers,subjects]);
   function add(){
     if(!tId||!subj)return alert("Select teacher and subject.");
-    if(!fee||isNaN(+fee)||+fee<0)return alert("Enter a valid fee amount for this subject.");
+    if(!fee||isNaN(+fee)||+fee<0)return alert("Enter a valid fee amount.");
     if((assignments||[]).find(a=>a.teacherId===tId&&a.subject===subj))return alert("Already assigned.");
     onChange([...(assignments||[]),{id:uid(),teacherId:tId,subject:subj,subjectFee:+fee}]);
     setTId("");setSubj("");setFee("");
@@ -203,14 +243,101 @@ function printContent(title, htmlContent) {
   setTimeout(()=>{win.print();},600);
 }
 
+// ── CLOUD SYNC COMPONENT ──────────────────────────────────────────
+function CloudSyncPanel({onDataImport}){
+  const [cfg,setCfg]=useState(()=>dbGet(SYNC_KEY,{apiKey:"",binId:""}));
+  const [status,setStatus]=useState("");
+  const [loading,setLoading]=useState(false);
+  const [showKey,setShowKey]=useState(false);
+  const [lastSync,setLastSync]=useState(()=>dbGet("ae_lastSync",""));
+
+  function saveCfg(k,v){const next={...cfg,[k]:v};setCfg(next);dbSet(SYNC_KEY,next);}
+
+  async function handleCreateBin(){
+    if(!cfg.apiKey.trim())return alert("Enter your JSONBin Master Key first.");
+    setLoading(true);setStatus("Creating new bin…");
+    try{
+      const id=await createNewBin(cfg.apiKey.trim());
+      const next={...cfg,binId:id};setCfg(next);dbSet(SYNC_KEY,next);
+      setStatus("✅ New bin created! ID saved. Now click Push to Cloud.");
+    }catch(e){setStatus("❌ "+e.message);}
+    setLoading(false);
+  }
+
+  async function handlePush(){
+    setLoading(true);setStatus("Pushing to cloud…");
+    try{
+      await pushToCloud(cfg);
+      const ts=new Date().toLocaleString("en-BD");
+      setLastSync(ts);dbSet("ae_lastSync",ts);
+      setStatus("✅ Pushed successfully at "+ts);
+    }catch(e){setStatus("❌ "+e.message);}
+    setLoading(false);
+  }
+
+  async function handlePull(){
+    if(!window.confirm("This will REPLACE all local data with cloud data. Continue?"))return;
+    setLoading(true);setStatus("Pulling from cloud…");
+    try{
+      const data=await pullFromCloud(cfg);
+      ALL_DATA_KEYS.forEach(k=>{if(data[k]!==undefined)dbSet(k,data[k]);});
+      const ts=new Date().toLocaleString("en-BD");
+      setLastSync(ts);dbSet("ae_lastSync",ts);
+      setStatus("✅ Pulled! Reloading app…");
+      setTimeout(()=>onDataImport(),800);
+    }catch(e){setStatus("❌ "+e.message);}
+    setLoading(false);
+  }
+
+  const ready=!!(cfg.apiKey&&cfg.binId);
+
+  return <Card style={{padding:18,marginBottom:14}}>
+    <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
+      <div style={{width:8,height:8,borderRadius:"50%",background:ready?"#059669":"#d1d5db",animation:ready?"pulse 2s infinite":"none"}}/>
+      <p style={{fontSize:11,fontWeight:700,color:N,textTransform:"uppercase",letterSpacing:"0.06em",margin:0}}>☁️ Cloud Sync (Cross-Device)</p>
+      {lastSync&&<span style={{fontSize:10,color:"#9ca3af",marginLeft:"auto"}}>Last: {lastSync}</span>}
+    </div>
+
+    <InfoBox color="blue">
+      <b>How to set up:</b><br/>
+      1. Go to <a href="https://jsonbin.io" target="_blank" style={{color:"#1d4ed8"}}>jsonbin.io</a> → create a FREE account<br/>
+      2. Go to API Keys → copy your <b>Master Key</b><br/>
+      3. Paste it below → click <b>Create New Bin</b> (first time only)<br/>
+      4. After that: <b>Push</b> saves data to cloud, <b>Pull</b> loads it on any device
+    </InfoBox>
+
+    <div style={{marginBottom:10}}>
+      <FL label="JSONBin Master Key"/>
+      <div style={{display:"flex",gap:6}}>
+        <input type={showKey?"text":"password"} value={cfg.apiKey} onChange={e=>saveCfg("apiKey",e.target.value)} placeholder="$2b$10$..." style={{...IS,flex:1,fontSize:12,fontFamily:"monospace"}} onFocus={focusIn} onBlur={focusOut}/>
+        <button onClick={()=>setShowKey(p=>!p)} style={{padding:"8px 10px",borderRadius:8,border:"1.5px solid #e5e7eb",background:"#f9fafb",fontSize:11,fontWeight:700,color:"#6b7280",cursor:"pointer"}}>{showKey?"Hide":"Show"}</button>
+      </div>
+    </div>
+    <div style={{marginBottom:12}}>
+      <FL label="Bin ID"/>
+      <div style={{display:"flex",gap:6}}>
+        <input type="text" value={cfg.binId} onChange={e=>saveCfg("binId",e.target.value)} placeholder="64abc123..." style={{...IS,flex:1,fontSize:12,fontFamily:"monospace"}} onFocus={focusIn} onBlur={focusOut}/>
+        <Btn onClick={handleCreateBin} color="ghost" disabled={loading} style={{fontSize:11,whiteSpace:"nowrap"}}>Create New Bin</Btn>
+      </div>
+      <p style={{fontSize:10,color:"#9ca3af",marginTop:4}}>First time: enter API key then click "Create New Bin". The ID will fill automatically.</p>
+    </div>
+
+    <div style={{display:"flex",gap:8}}>
+      <Btn onClick={handlePush} color="navy" disabled={!ready||loading} style={{flex:1}}>⬆️ Push to Cloud</Btn>
+      <Btn onClick={handlePull} color="teal" disabled={!ready||loading} style={{flex:1}}>⬇️ Pull from Cloud</Btn>
+    </div>
+    {status&&<div style={{marginTop:10,padding:"8px 12px",borderRadius:8,background:status.startsWith("✅")?"#f0fdf4":status.startsWith("❌")?"#fef2f2":"#fffbeb",color:status.startsWith("✅")?"#065f46":status.startsWith("❌")?"#991b1b":"#92400e",fontSize:12,fontWeight:600}}>{status}</div>}
+    {loading&&<div style={{textAlign:"center",marginTop:8,fontSize:12,color:"#9ca3af"}}>⏳ Please wait…</div>}
+  </Card>;
+}
+
 // ── SETTINGS ─────────────────────────────────────────────────────
-function Settings({settings,setSettings}){
+function Settings({settings,setSettings,onDataImport}){
   const [form,setForm]=useState({classStart:"",subjects:[],paymentMethods:[],expenseCategories:[],centreName:"",contactNo:"",address:"",...settings});
   const [nSub,setNSub]=useState("");
   const [nPay,setNPay]=useState("");
   const [nCat,setNCat]=useState("");
 
-  // sync when settings prop changes
   useEffect(()=>{
     setForm(prev=>({classStart:"",subjects:[],paymentMethods:[],expenseCategories:[],centreName:"",contactNo:"",address:"",...settings}));
   },[settings]);
@@ -251,6 +378,10 @@ function Settings({settings,setSettings}){
   return <div>
     <SHdr title="Settings" sub="Configure everything before adding data"/>
     {!settings.classStart&&<InfoBox>⚠️ <b>First-time setup:</b> Set admin check-in cutoff time and add subjects before adding data.</InfoBox>}
+
+    {/* Cloud Sync */}
+    <CloudSyncPanel onDataImport={onDataImport}/>
+
     <Card style={{padding:18,marginBottom:14}}>
       <p style={{fontSize:11,fontWeight:700,color:AM,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:12}}>⏰ Admin Attendance Cutoff</p>
       <FI label="Admin Must Check-In By (Late after this time)" req type="time" value={form.classStart||""} onChange={e=>sf("classStart",e.target.value)}/>
@@ -283,17 +414,16 @@ function Settings({settings,setSettings}){
   </div>;
 }
 
-// ── ADMIN ATTENDANCE (replaces Dashboard) ─────────────────────────
+// ── ADMIN ATTENDANCE ──────────────────────────────────────────────
 function AdminAttendance({adminAttendance,setAdminAttendance,settings}){
-  const CUTOFF=settings.classStart||"11:30"; // 11:30am default
-  const LATE_WINDOW=10; // minutes
+  const CUTOFF=settings.classStart||"11:30";
+  const LATE_WINDOW=10;
   const [checkingIn,setCheckingIn]=useState(false);
-  const [editModal,setEditModal]=useState(null); // date string for yesterday edit
+  const [editModal,setEditModal]=useState(null);
 
   const todayStr=today();
   const todayRec=adminAttendance.find(r=>r.date===todayStr);
 
-  // Check yesterday's record — allow editing
   const yest=new Date();yest.setDate(yest.getDate()-1);
   const yestStr=yest.toISOString().split("T")[0];
   const yestRec=adminAttendance.find(r=>r.date===yestStr);
@@ -335,7 +465,6 @@ function AdminAttendance({adminAttendance,setAdminAttendance,settings}){
 
   const SC={present:["#f0fdf4","#059669","#d1fae5"],late:["#fffbeb","#d97706","#fde68a"],absent:["#fef2f2","#dc2626","#fecaca"]};
 
-  // Print attendance
   function handlePrint(){
     const rows=adminAttendance.sort((a,b)=>b.date.localeCompare(a.date)).map(r=>`
       <tr>
@@ -358,7 +487,6 @@ function AdminAttendance({adminAttendance,setAdminAttendance,settings}){
   return <div>
     <SHdr title="Admin Attendance" sub="Your personal daily check-in — cannot be falsified" action={<Btn onClick={handlePrint} color="ghost" style={{fontSize:12}}>🖨 Print</Btn>}/>
 
-    {/* Today's check-in card */}
     <Card style={{padding:22,marginBottom:16,borderLeft:`4px solid ${todayRec?SC[todayRec.status]?.[1]:N}`}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:10}}>
         <div>
@@ -381,7 +509,6 @@ function AdminAttendance({adminAttendance,setAdminAttendance,settings}){
       </div>
     </Card>
 
-    {/* Yesterday edit (editable only for next day) */}
     <Card style={{padding:16,marginBottom:16,border:"1.5px dashed #e5e7eb"}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
         <div>
@@ -396,14 +523,12 @@ function AdminAttendance({adminAttendance,setAdminAttendance,settings}){
       </div>
     </Card>
 
-    {/* Stats */}
     <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:16}}>
       <StatCard label="On Time" value={total-lates-absents} icon="✅" from={GR} to="#047857"/>
       <StatCard label="Late Days" value={lates} icon="⚠️" from={AM} to="#b45309"/>
       <StatCard label="Absent" value={absents} icon="❌" from={RE} to="#b91c1c"/>
     </div>
 
-    {/* History */}
     <Card style={{padding:14}}>
       <p style={{fontSize:11,fontWeight:700,color:"#9ca3af",textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:10}}>Attendance History</p>
       {monthRecs.length===0?<Empty icon="📅" msg="No records this month."/>
@@ -431,7 +556,7 @@ function YesterdayEditForm({rec,onSave,onClose}){
       <button onClick={()=>setAbsent(true)} style={{flex:1,padding:"9px",borderRadius:10,border:`2px solid ${absent?RE:"#e5e7eb"}`,background:absent?"#fef2f2":"#fff",color:absent?RE:"#6b7280",fontWeight:700,fontSize:13,cursor:"pointer"}}>Absent</button>
     </div>
     {!absent&&<FI label="Check-In Time" req type="time" value={checkIn} onChange={e=>setCheckIn(e.target.value)}/>}
-    <InfoBox color="amber">⚠️ Yesterday's record is editable only for 1 day. This is the last time you can edit this date.</InfoBox>
+    <InfoBox color="amber">⚠️ Yesterday's record is editable only for 1 day.</InfoBox>
     <div style={{display:"flex",gap:10}}>
       <Btn onClick={()=>onSave(checkIn,absent)} color="amber" style={{flex:1}}>Save</Btn>
       <Btn onClick={onClose} color="ghost">Cancel</Btn>
@@ -439,8 +564,28 @@ function YesterdayEditForm({rec,onSave,onClose}){
   </div>;
 }
 
+// ── ARCHIVE MODAL ─────────────────────────────────────────────────
+function ArchiveModal({type,name,onConfirm,onClose}){
+  const [reason,setReason]=useState("");
+  const REASONS_STUDENT=["Left voluntarily","Completed course","Financial reasons","Transferred to another institution","Family relocation","Health reasons","Other"];
+  const REASONS_TEACHER=["Resigned","Contract ended","Personal reasons","Family relocation","Found other employment","Other"];
+  const reasons=type==="student"?REASONS_STUDENT:REASONS_TEACHER;
+  return <div>
+    <InfoBox color="amber">
+      <b>📦 Archive {name}?</b><br/>
+      All their data (fees, attendance, results) will be <b>preserved</b>. You can restore them anytime from the Alumni/Archive tab.
+    </InfoBox>
+    <FSel label="Reason for Leaving" req options={reasons} value={reason} onChange={e=>setReason(e.target.value)}/>
+    <FI label="Additional Notes (optional)" value={""} onChange={()=>{}} placeholder="Any extra context…"/>
+    <div style={{display:"flex",gap:10}}>
+      <Btn onClick={()=>{if(!reason)return alert("Select a reason.");onConfirm(reason);}} color="orange" style={{flex:1}}>📦 Archive</Btn>
+      <Btn onClick={onClose} color="ghost">Cancel</Btn>
+    </div>
+  </div>;
+}
+
 // ── STUDENTS ──────────────────────────────────────────────────────
-function Students({students,setStudents,teachers,enrollments,setEnrollments,settings,results}){
+function Students({students,setStudents,teachers,enrollments,setEnrollments,settings,results,archivedStudents,setArchivedStudents}){
   const [modal,setModal]=useState(false);
   const [editId,setEditId]=useState(null);
   const [viewId,setViewId]=useState(null);
@@ -448,13 +593,14 @@ function Students({students,setStudents,teachers,enrollments,setEnrollments,sett
   const [courseFilter,setCourseFilter]=useState("");
   const [subjectFilter,setSubjectFilter]=useState("");
   const [teacherFilter,setTeacherFilter]=useState("");
-  const [activeTab,setActiveTab]=useState("all");
+  const [activeTab,setActiveTab]=useState("active"); // "active" | "alumni"
+  const [archiveModal,setArchiveModal]=useState(null);
+  const [restoreModal,setRestoreModal]=useState(null);
 
   const blank={studentId:"",name:"",contact:"",address:"",parentName:"",parentContact:"",course:"",enrolledSubjects:[],monthlyFee:"",joinDate:"",notes:"",assignments:[]};
   const [form,setForm]=useState(blank);
   const sf=(k,v)=>setForm(p=>({...p,[k]:v}));
 
-  // Collect unique courses
   const allCourses=[...new Set(students.map(s=>s.course).filter(Boolean))];
   const allSubjects=settings.subjects||[];
 
@@ -465,6 +611,11 @@ function Students({students,setStudents,teachers,enrollments,setEnrollments,sett
     const matchSubject=!subjectFilter||(s.enrolledSubjects||[]).includes(subjectFilter);
     const matchTeacher=!teacherFilter||enrollments.some(e=>e.studentId===s.id&&e.teacherId===teacherFilter);
     return matchSearch&&matchCourse&&matchSubject&&matchTeacher;
+  });
+
+  const filteredAlumni=(archivedStudents||[]).filter(s=>{
+    const q=search.toLowerCase();
+    return !search||[(s.name||""),(s.studentId||""),(s.parentName||"")].some(v=>v.toLowerCase().includes(q));
   });
 
   function openAdd(){setEditId(null);setForm({...blank});setModal(true);}
@@ -498,9 +649,31 @@ function Students({students,setStudents,teachers,enrollments,setEnrollments,sett
   }
 
   function del(id){
-    if(!window.confirm("Delete this student? All their records will be removed."))return;
+    if(!window.confirm("Permanently delete this student? All their records will be removed. Consider Archiving instead."))return;
     setStudents(p=>p.filter(s=>s.id!==id));
     setEnrollments(p=>p.filter(e=>e.studentId!==id));
+  }
+
+  function doArchive(student,reason){
+    const archived={...student,archivedAt:today(),archiveReason:reason,originalEnrollments:enrollments.filter(e=>e.studentId===student.id)};
+    setArchivedStudents(p=>[...(p||[]),archived]);
+    setStudents(p=>p.filter(s=>s.id!==student.id));
+    // Keep enrollments in archived data but remove from active
+    setEnrollments(p=>p.filter(e=>e.studentId!==student.id));
+    setArchiveModal(null);
+  }
+
+  function doRestore(archived){
+    // Move back to active students
+    const {archivedAt,archiveReason,originalEnrollments,...student}=archived;
+    setStudents(p=>[...p,{...student,restoredAt:today(),previousArchiveReason:archiveReason}]);
+    // Restore their enrollments
+    if(originalEnrollments?.length){
+      setEnrollments(p=>[...p.filter(e=>e.studentId!==archived.id),...originalEnrollments]);
+    }
+    setArchivedStudents(p=>(p||[]).filter(s=>s.id!==archived.id));
+    setRestoreModal(null);
+    alert(`✅ ${archived.name} has been restored to active students!`);
   }
 
   const vs=students.find(s=>s.id===viewId);
@@ -509,7 +682,6 @@ function Students({students,setStudents,teachers,enrollments,setEnrollments,sett
 
   function handlePrintAll(){
     const rows=filtered.map(s=>{
-      const myE=enrollments.filter(e=>e.studentId===s.id);
       return `<tr>
         <td>${s.studentId||"—"}</td>
         <td><b>${s.name}</b></td>
@@ -522,7 +694,7 @@ function Students({students,setStudents,teachers,enrollments,setEnrollments,sett
       </tr>`;
     }).join("");
     printContent("Student List",`
-      <p style="font-size:12px;color:#6b7280;margin-bottom:12px;">Total: ${filtered.length} students${courseFilter?` | Course: ${courseFilter}`:""}${subjectFilter?` | Subject: ${subjectFilter}`:""}</p>
+      <p style="font-size:12px;color:#6b7280;margin-bottom:12px;">Total: ${filtered.length} active students</p>
       <table><thead><tr><th>ID</th><th>Name</th><th>Course</th><th>Subjects</th><th>Contact</th><th>Parent</th><th>Parent Contact</th><th>Monthly Fee</th></tr></thead><tbody>${rows}</tbody></table>`);
   }
 
@@ -530,7 +702,7 @@ function Students({students,setStudents,teachers,enrollments,setEnrollments,sett
     if(!vs)return;
     const myE=vsEnroll;
     const assignRows=myE.map(e=>{const t=teachers.find(t=>t.id===e.teacherId);return `<tr><td><span class="badge badge-blue">${e.subject}</span></td><td>${t?.name||"—"}</td><td>${e.subjectFee?fmt(e.subjectFee):"—"}</td></tr>`;}).join("");
-    const resRows=vsResults.map(r=>`<tr><td>${r.examName}</td><td>${r.examType||"—"}</td><td>${r.subject||"—"}</td><td>${r.teacher||"—"}</td><td>${r.score}/${r.totalMarks}</td><td><span class="badge badge-${r.grade==="A+"||r.grade==="A"?"green":r.grade==="F"?"red":"amber"}">${r.grade||"—"}</span></td><td>${r.date}</td></tr>`).join("");
+    const resRows=vsResults.map(r=>`<tr><td>${r.examName}</td><td>${r.examType||"—"}</td><td>${r.subject||"—"}</td><td>${r.score}/${r.totalMarks}</td><td><span class="badge badge-${r.grade==="A+"||r.grade==="A"?"green":r.grade==="F"?"red":"amber"}">${r.grade||"—"}</span></td><td>${r.date}</td></tr>`).join("");
     printContent(`Student Profile — ${vs.name}`,`
       <div class="card"><h3>${vs.name} ${vs.studentId?"("+vs.studentId+")":""}</h3>
       <div class="detail-grid">
@@ -538,58 +710,110 @@ function Students({students,setStudents,teachers,enrollments,setEnrollments,sett
         <div class="detail-item"><div class="lbl">Contact</div><div class="val">${vs.contact||"—"}</div></div>
         <div class="detail-item"><div class="lbl">Parent</div><div class="val">${vs.parentName||"—"}</div></div>
         <div class="detail-item"><div class="lbl">Parent Contact</div><div class="val">${vs.parentContact||"—"}</div></div>
-        <div class="detail-item"><div class="lbl">Address</div><div class="val">${vs.address||"—"}</div></div>
         <div class="detail-item"><div class="lbl">Join Date</div><div class="val">${vs.joinDate||"—"}</div></div>
         <div class="detail-item"><div class="lbl">Monthly Fee</div><div class="val">${vs.monthlyFee?fmt(vs.monthlyFee):"—"}</div></div>
-        <div class="detail-item"><div class="lbl">Subjects</div><div class="val">${(vs.enrolledSubjects||[]).join(", ")||"—"}</div></div>
       </div></div>
       ${myE.length?`<h2>Teacher Assignments</h2><table><thead><tr><th>Subject</th><th>Teacher</th><th>Subject Fee</th></tr></thead><tbody>${assignRows}</tbody></table>`:""}
-      ${vsResults.length?`<h2>Exam Results</h2><table><thead><tr><th>Exam</th><th>Type</th><th>Subject</th><th>Teacher</th><th>Score</th><th>Grade</th><th>Date</th></tr></thead><tbody>${resRows}</tbody></table>`:""}
+      ${vsResults.length?`<h2>Exam Results</h2><table><thead><tr><th>Exam</th><th>Type</th><th>Subject</th><th>Score</th><th>Grade</th><th>Date</th></tr></thead><tbody>${resRows}</tbody></table>`:""}
       ${vs.notes?`<div class="card" style="margin-top:10px;"><b>Notes:</b> ${vs.notes}</div>`:""}`);
   }
 
+  // Tab bar
+  const TabBtn=({id,label,count})=><button onClick={()=>setActiveTab(id)} style={{padding:"8px 16px",borderRadius:10,border:"none",cursor:"pointer",fontSize:13,fontWeight:700,...(activeTab===id?{background:N,color:"#fff"}:{background:"#f3f4f6",color:"#6b7280"})}}>
+    {label} <span style={{fontSize:11,opacity:.7}}>({count})</span>
+  </button>;
+
   return <div>
-    <SHdr title="Students" sub={`${students.length} enrolled`} action={<div style={{display:"flex",gap:8}}><Btn onClick={handlePrintAll} color="ghost" style={{fontSize:12}}>🖨 Print List</Btn><Btn onClick={openAdd}>+ Add Student</Btn></div>}/>
+    <SHdr title="Students" sub={`${students.length} active · ${(archivedStudents||[]).length} alumni`}
+      action={<div style={{display:"flex",gap:8}}>
+        <Btn onClick={handlePrintAll} color="ghost" style={{fontSize:12}}>🖨 Print List</Btn>
+        <Btn onClick={openAdd}>+ Add Student</Btn>
+      </div>}/>
 
-    {/* Filter bar */}
-    <Card style={{padding:14,marginBottom:14}}>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
-        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search name, ID, parent…" style={{...IS,fontSize:12}} onFocus={focusIn} onBlur={focusOut}/>
-        <select value={courseFilter} onChange={e=>setCourseFilter(e.target.value)} style={{...IS,fontSize:12}}><option value="">All Courses</option>{allCourses.map(c=><option key={c} value={c}>{c}</option>)}</select>
-        <select value={subjectFilter} onChange={e=>setSubjectFilter(e.target.value)} style={{...IS,fontSize:12}}><option value="">All Subjects</option>{allSubjects.map(s=><option key={s} value={s}>{s}</option>)}</select>
-        <select value={teacherFilter} onChange={e=>setTeacherFilter(e.target.value)} style={{...IS,fontSize:12}}><option value="">All Teachers</option>{teachers.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select>
+    {/* Tabs */}
+    <div style={{display:"flex",gap:8,marginBottom:14}}>
+      <TabBtn id="active" label="Active" count={students.length}/>
+      <TabBtn id="alumni" label="📦 Alumni / Inactive" count={(archivedStudents||[]).length}/>
+    </div>
+
+    {activeTab==="active"&&<>
+      {/* Filter bar */}
+      <Card style={{padding:14,marginBottom:14}}>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search name, ID, parent…" style={{...IS,fontSize:12}} onFocus={focusIn} onBlur={focusOut}/>
+          <select value={courseFilter} onChange={e=>setCourseFilter(e.target.value)} style={{...IS,fontSize:12}}><option value="">All Courses</option>{allCourses.map(c=><option key={c} value={c}>{c}</option>)}</select>
+          <select value={subjectFilter} onChange={e=>setSubjectFilter(e.target.value)} style={{...IS,fontSize:12}}><option value="">All Subjects</option>{allSubjects.map(s=><option key={s} value={s}>{s}</option>)}</select>
+          <select value={teacherFilter} onChange={e=>setTeacherFilter(e.target.value)} style={{...IS,fontSize:12}}><option value="">All Teachers</option>{teachers.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select>
+        </div>
+        {(courseFilter||subjectFilter||teacherFilter||search)&&<button onClick={()=>{setCourseFilter("");setSubjectFilter("");setTeacherFilter("");setSearch("");}} style={{fontSize:11,fontWeight:700,color:RE,background:"none",border:"none",cursor:"pointer"}}>✕ Clear filters</button>}
+      </Card>
+
+      {filtered.length===0?<Empty icon="🎓" msg={search||courseFilter||subjectFilter||teacherFilter?"No results.":"No students yet."}/>
+      :<div style={{display:"flex",flexDirection:"column",gap:10}}>
+        {filtered.map(s=>{
+          const myE=enrollments.filter(e=>e.studentId===s.id);
+          return <Card key={s.id} style={{padding:14}}>
+            <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:10}}>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                  <span style={{fontWeight:800,color:N,fontSize:14}}>{s.name}</span>
+                  {s.studentId&&<Badge color="navy">{s.studentId}</Badge>}
+                  {s.course&&<Badge color="purple">{s.course}</Badge>}
+                  {s.restoredAt&&<Badge color="teal">↩ Restored</Badge>}
+                </div>
+                <div style={{fontSize:11,color:"#9ca3af",marginTop:3}}>{s.contact||"No contact"}{s.parentName?` · Parent: ${s.parentName}`:""}</div>
+                <div style={{display:"flex",flexWrap:"wrap",gap:3,marginTop:5}}>{(s.enrolledSubjects||[]).map(sub=><Badge key={sub} color="blue">{sub}</Badge>)}</div>
+                {myE.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:3,marginTop:5}}>{myE.map(e=>{const t=teachers.find(t=>t.id===e.teacherId);return <span key={e.id} style={{fontSize:10,background:"#f0fdf4",color:"#065f46",border:"1px solid #a7f3d0",borderRadius:7,padding:"2px 7px",fontWeight:600}}>{e.subject} → {t?.name||"?"} {e.subjectFee?`(${fmt(e.subjectFee)})`:""}</span>;})}</div>}
+              </div>
+              {s.monthlyFee&&<div style={{textAlign:"right",flexShrink:0}}><div style={{fontWeight:800,color:AM,fontSize:14}}>{fmt(s.monthlyFee)}</div><div style={{fontSize:10,color:"#9ca3af"}}>/month</div></div>}
+            </div>
+            <HR/>
+            <div style={{display:"flex",gap:14,flexWrap:"wrap"}}>
+              <button onClick={()=>setViewId(s.id)} style={{fontSize:12,fontWeight:700,color:N,background:"none",border:"none",cursor:"pointer"}}>View</button>
+              <button onClick={()=>openEdit(s)} style={{fontSize:12,fontWeight:700,color:TE,background:"none",border:"none",cursor:"pointer"}}>Edit</button>
+              <button onClick={()=>setArchiveModal(s)} style={{fontSize:12,fontWeight:700,color:"#ea580c",background:"none",border:"none",cursor:"pointer"}}>📦 Archive</button>
+              <button onClick={()=>del(s.id)} style={{fontSize:12,fontWeight:700,color:RE,background:"none",border:"none",cursor:"pointer"}}>Delete</button>
+            </div>
+          </Card>;
+        })}
+      </div>}
+    </>}
+
+    {activeTab==="alumni"&&<>
+      <InfoBox color="blue">📦 Archived students keep all their data. Use <b>Restore</b> to make them active again anytime.</InfoBox>
+      <div style={{marginBottom:14}}>
+        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search alumni…" style={{...IS,fontSize:12}} onFocus={focusIn} onBlur={focusOut}/>
       </div>
-      {(courseFilter||subjectFilter||teacherFilter||search)&&<button onClick={()=>{setCourseFilter("");setSubjectFilter("");setTeacherFilter("");setSearch("");}} style={{fontSize:11,fontWeight:700,color:RE,background:"none",border:"none",cursor:"pointer"}}>✕ Clear filters</button>}
-    </Card>
-
-    {filtered.length===0?<Empty icon="🎓" msg={search||courseFilter||subjectFilter||teacherFilter?"No results.":"No students yet."}/>
-    :<div style={{display:"flex",flexDirection:"column",gap:10}}>
-      {filtered.map(s=>{
-        const myE=enrollments.filter(e=>e.studentId===s.id);
-        return <Card key={s.id} style={{padding:14}}>
+      {filteredAlumni.length===0?<Empty icon="📦" msg="No archived students yet."/>
+      :<div style={{display:"flex",flexDirection:"column",gap:10}}>
+        {filteredAlumni.map(s=><Card key={s.id} style={{padding:14,borderLeft:"4px solid #ea580c",opacity:.9}}>
           <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:10}}>
-            <div style={{flex:1,minWidth:0}}>
+            <div style={{flex:1}}>
               <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
-                <span style={{fontWeight:800,color:N,fontSize:14}}>{s.name}</span>
-                {s.studentId&&<Badge color="navy">{s.studentId}</Badge>}
-                {s.course&&<Badge color="purple">{s.course}</Badge>}
+                <span style={{fontWeight:800,color:"#374151",fontSize:14}}>{s.name}</span>
+                {s.studentId&&<Badge color="gray">{s.studentId}</Badge>}
+                {s.course&&<Badge color="gray">{s.course}</Badge>}
+                <Badge color="orange">Inactive</Badge>
               </div>
               <div style={{fontSize:11,color:"#9ca3af",marginTop:3}}>{s.contact||"No contact"}{s.parentName?` · Parent: ${s.parentName}`:""}</div>
-              <div style={{display:"flex",flexWrap:"wrap",gap:3,marginTop:5}}>{(s.enrolledSubjects||[]).map(sub=><Badge key={sub} color="blue">{sub}</Badge>)}</div>
-              {myE.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:3,marginTop:5}}>{myE.map(e=>{const t=teachers.find(t=>t.id===e.teacherId);return <span key={e.id} style={{fontSize:10,background:"#f0fdf4",color:"#065f46",border:"1px solid #a7f3d0",borderRadius:7,padding:"2px 7px",fontWeight:600}}>{e.subject} → {t?.name||"?"} {e.subjectFee?`(${fmt(e.subjectFee)})`:""}</span>;})}</div>}
+              <div style={{fontSize:11,marginTop:4,display:"flex",gap:8,flexWrap:"wrap"}}>
+                <span style={{color:"#9ca3af"}}>Archived: <b>{s.archivedAt}</b></span>
+                <span style={{color:"#ea580c",fontWeight:600}}>Reason: {s.archiveReason}</span>
+              </div>
+              {(s.originalEnrollments||[]).length>0&&<div style={{fontSize:11,color:"#9ca3af",marginTop:2}}>Had {s.originalEnrollments.length} subject assignment(s)</div>}
             </div>
-            {s.monthlyFee&&<div style={{textAlign:"right",flexShrink:0}}><div style={{fontWeight:800,color:AM,fontSize:14}}>{fmt(s.monthlyFee)}</div><div style={{fontSize:10,color:"#9ca3af"}}>/month</div></div>}
+            {s.monthlyFee&&<div style={{textAlign:"right",flexShrink:0}}><div style={{fontWeight:800,color:"#9ca3af",fontSize:13}}>{fmt(s.monthlyFee)}</div><div style={{fontSize:10,color:"#9ca3af"}}>/month</div></div>}
           </div>
           <HR/>
           <div style={{display:"flex",gap:14}}>
-            <button onClick={()=>setViewId(s.id)} style={{fontSize:12,fontWeight:700,color:N,background:"none",border:"none",cursor:"pointer"}}>View</button>
-            <button onClick={()=>openEdit(s)} style={{fontSize:12,fontWeight:700,color:TE,background:"none",border:"none",cursor:"pointer"}}>Edit</button>
-            <button onClick={()=>del(s.id)} style={{fontSize:12,fontWeight:700,color:RE,background:"none",border:"none",cursor:"pointer"}}>Delete</button>
+            <button onClick={()=>setRestoreModal(s)} style={{fontSize:12,fontWeight:700,color:GR,background:"none",border:"none",cursor:"pointer"}}>↩ Restore to Active</button>
+            <button onClick={()=>{if(!window.confirm("Permanently delete alumni record?"))return;setArchivedStudents(p=>p.filter(x=>x.id!==s.id));}} style={{fontSize:12,fontWeight:700,color:RE,background:"none",border:"none",cursor:"pointer"}}>Delete Permanently</button>
           </div>
-        </Card>;
-      })}
-    </div>}
+        </Card>)}
+      </div>}
+    </>}
 
+    {/* Modals */}
     {modal&&<Modal title={editId?"Edit Student":"Add New Student"} onClose={()=>setModal(false)} wide>
       <p style={{fontSize:11,color:"#9ca3af",marginBottom:14}}>All starred fields are required to save a student.</p>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 14px"}}>
@@ -607,6 +831,22 @@ function Students({students,setStudents,teachers,enrollments,setEnrollments,sett
       <SubjectFeeEditor assignments={form.assignments||[]} onChange={v=>sf("assignments",v)} teachers={teachers} subjects={settings.subjects||[]}/>
       <FTA label="Notes (optional)" value={form.notes} onChange={e=>sf("notes",e.target.value)}/>
       <div style={{display:"flex",gap:10,marginTop:6}}><Btn onClick={save} style={{flex:1}}>{editId?"Update Student":"Add Student"}</Btn><Btn onClick={()=>setModal(false)} color="ghost">Cancel</Btn></div>
+    </Modal>}
+
+    {archiveModal&&<Modal title={`Archive Student — ${archiveModal.name}`} onClose={()=>setArchiveModal(null)}>
+      <ArchiveModal type="student" name={archiveModal.name} onConfirm={(reason)=>doArchive(archiveModal,reason)} onClose={()=>setArchiveModal(null)}/>
+    </Modal>}
+
+    {restoreModal&&<Modal title={`Restore — ${restoreModal.name}`} onClose={()=>setRestoreModal(null)}>
+      <InfoBox color="green">
+        <b>↩ Restore {restoreModal.name}?</b><br/>
+        They will be moved back to active students. Previously archived on <b>{restoreModal.archivedAt}</b> (Reason: {restoreModal.archiveReason}).
+        {(restoreModal.originalEnrollments||[]).length>0&&<><br/>Their <b>{restoreModal.originalEnrollments.length}</b> teacher assignment(s) will also be restored.</>}
+      </InfoBox>
+      <div style={{display:"flex",gap:10}}>
+        <Btn onClick={()=>doRestore(restoreModal)} color="green" style={{flex:1}}>↩ Restore Student</Btn>
+        <Btn onClick={()=>setRestoreModal(null)} color="ghost">Cancel</Btn>
+      </div>
     </Modal>}
 
     {vs&&<Modal title="Student Profile" onClose={()=>setViewId(null)} wide>
@@ -656,13 +896,9 @@ function Courses({students,teachers,enrollments,settings}){
 
   function handlePrint(){
     const byGroup={};
-    if(selectedCourse){
-      byGroup[selectedCourse]=filtered;
-    } else if(selectedSubject){
-      byGroup[selectedSubject]=filtered;
-    } else {
-      filtered.forEach(s=>{const c=s.course||"No Course";if(!byGroup[c])byGroup[c]=[];byGroup[c].push(s);});
-    }
+    if(selectedCourse){byGroup[selectedCourse]=filtered;}
+    else if(selectedSubject){byGroup[selectedSubject]=filtered;}
+    else{filtered.forEach(s=>{const c=s.course||"No Course";if(!byGroup[c])byGroup[c]=[];byGroup[c].push(s);});}
     let html="";
     Object.entries(byGroup).forEach(([grp,sts])=>{
       html+=`<h2>${grp} (${sts.length})</h2><table><thead><tr><th>ID</th><th>Name</th><th>Course</th><th>Subjects</th><th>Contact</th><th>Parent</th></tr></thead><tbody>`;
@@ -672,7 +908,6 @@ function Courses({students,teachers,enrollments,settings}){
     printContent("Students by Course/Subject",html);
   }
 
-  // Group students by course for display
   const byCourse={};
   if(!selectedCourse&&!selectedSubject&&!selectedTeacher){
     filtered.forEach(s=>{const c=s.course||"No Course";if(!byCourse[c])byCourse[c]=[];byCourse[c].push(s);});
@@ -680,29 +915,19 @@ function Courses({students,teachers,enrollments,settings}){
 
   return <div>
     <SHdr title="Courses & Groups" sub="View students by course, subject, or teacher" action={<Btn onClick={handlePrint} color="ghost" style={{fontSize:12}}>🖨 Print</Btn>}/>
-
     <Card style={{padding:14,marginBottom:16}}>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
-        <div>
-          <FL label="Filter by Course"/>
-          <select value={selectedCourse} onChange={e=>setSelectedCourse(e.target.value)} style={IS}><option value="">All Courses</option>{allCourses.map(c=><option key={c} value={c}>{c}</option>)}</select>
-        </div>
-        <div>
-          <FL label="Filter by Subject"/>
-          <select value={selectedSubject} onChange={e=>setSelectedSubject(e.target.value)} style={IS}><option value="">All Subjects</option>{allSubjects.map(s=><option key={s} value={s}>{s}</option>)}</select>
-        </div>
-        <div>
-          <FL label="Filter by Teacher"/>
-          <select value={selectedTeacher} onChange={e=>setSelectedTeacher(e.target.value)} style={IS}><option value="">All Teachers</option>{teachers.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select>
-        </div>
+        <div><FL label="Filter by Course"/><select value={selectedCourse} onChange={e=>setSelectedCourse(e.target.value)} style={IS}><option value="">All Courses</option>{allCourses.map(c=><option key={c} value={c}>{c}</option>)}</select></div>
+        <div><FL label="Filter by Subject"/><select value={selectedSubject} onChange={e=>setSelectedSubject(e.target.value)} style={IS}><option value="">All Subjects</option>{allSubjects.map(s=><option key={s} value={s}>{s}</option>)}</select></div>
+        <div><FL label="Filter by Teacher"/><select value={selectedTeacher} onChange={e=>setSelectedTeacher(e.target.value)} style={IS}><option value="">All Teachers</option>{teachers.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select></div>
       </div>
       {(selectedCourse||selectedSubject||selectedTeacher)&&<button onClick={()=>{setSelectedCourse("");setSelectedSubject("");setSelectedTeacher("");}} style={{fontSize:11,fontWeight:700,color:RE,background:"none",border:"none",cursor:"pointer",marginTop:8}}>✕ Clear filters</button>}
     </Card>
 
     {(selectedCourse||selectedSubject||selectedTeacher)?
-      // Flat list when filtered
       <>
-        <div style={{fontSize:13,fontWeight:700,color:"#6b7280",marginBottom:10}}>Showing {filtered.length} student{filtered.length!==1?"s":""}{selectedCourse?` in ${selectedCourse}`:""}
+        <div style={{fontSize:13,fontWeight:700,color:"#6b7280",marginBottom:10}}>Showing {filtered.length} student{filtered.length!==1?"s":""}
+        {selectedCourse?` in ${selectedCourse}`:""}
         {selectedSubject?` studying ${selectedSubject}`:""}
         {selectedTeacher?` under ${teachers.find(t=>t.id===selectedTeacher)?.name||"?"}`:""}
         </div>
@@ -716,7 +941,6 @@ function Courses({students,teachers,enrollments,settings}){
                 {s.studentId&&<Badge color="navy">{s.studentId}</Badge>}
                 {s.course&&<Badge color="purple">{s.course}</Badge>}
               </div>
-              <div style={{fontSize:11,color:"#9ca3af",marginTop:2}}>{s.contact||"No contact"}</div>
               <div style={{display:"flex",flexWrap:"wrap",gap:3,marginTop:5}}>
                 {myE.map(e=>{const t=teachers.find(t=>t.id===e.teacherId);return <span key={e.id} style={{fontSize:10,background:"#f0fdf4",color:"#065f46",border:"1px solid #a7f3d0",borderRadius:7,padding:"2px 7px",fontWeight:600}}>{e.subject} → {t?.name||"?"}</span>;})}
               </div>
@@ -725,7 +949,6 @@ function Courses({students,teachers,enrollments,settings}){
         </div>}
       </>
     :
-      // Grouped by course when no filter
       <>
         {students.length===0?<Empty icon="📚" msg="No students enrolled yet."/>
         :Object.entries(byCourse).sort(([a],[b])=>a.localeCompare(b)).map(([course,sts])=>(
@@ -757,8 +980,11 @@ function Courses({students,teachers,enrollments,settings}){
 }
 
 // ── TEACHERS ──────────────────────────────────────────────────────
-function Teachers({teachers,setTeachers,students,enrollments,setEnrollments,settings}){
+function Teachers({teachers,setTeachers,students,enrollments,setEnrollments,settings,archivedTeachers,setArchivedTeachers}){
   const [modal,setModal]=useState(false);const [editId,setEditId]=useState(null);const [viewId,setViewId]=useState(null);
+  const [activeTab,setActiveTab]=useState("active");
+  const [archiveModal,setArchiveModal]=useState(null);
+  const [restoreModal,setRestoreModal]=useState(null);
   const blank={teacherId:"",name:"",contact:"",address:"",qualification:"",qualDetails:"",subjects:[],joinDate:"",notes:"",schedule:blankSched()};
   const [form,setForm]=useState(blank);const sf=(k,v)=>setForm(p=>({...p,[k]:v}));
 
@@ -785,12 +1011,32 @@ function Teachers({teachers,setTeachers,students,enrollments,setEnrollments,sett
   }
 
   function del(id){
-    if(!window.confirm("Delete this teacher?"))return;
+    if(!window.confirm("Permanently delete this teacher? Consider Archiving instead."))return;
     setTeachers(p=>p.filter(t=>t.id!==id));
     setEnrollments(p=>p.filter(e=>e.teacherId!==id));
   }
 
+  function doArchive(teacher,reason){
+    const archived={...teacher,archivedAt:today(),archiveReason:reason,originalEnrollments:enrollments.filter(e=>e.teacherId===teacher.id)};
+    setArchivedTeachers(p=>[...(p||[]),archived]);
+    setTeachers(p=>p.filter(t=>t.id!==teacher.id));
+    setEnrollments(p=>p.filter(e=>e.teacherId!==teacher.id));
+    setArchiveModal(null);
+  }
+
+  function doRestore(archived){
+    const {archivedAt,archiveReason,originalEnrollments,...teacher}=archived;
+    setTeachers(p=>[...p,{...teacher,restoredAt:today(),previousArchiveReason:archiveReason}]);
+    setArchivedTeachers(p=>(p||[]).filter(t=>t.id!==archived.id));
+    setRestoreModal(null);
+    alert(`✅ ${archived.name} has been restored to active teachers!`);
+  }
+
   const vt=teachers.find(t=>t.id===viewId);
+
+  const TabBtn=({id,label,count})=><button onClick={()=>setActiveTab(id)} style={{padding:"8px 16px",borderRadius:10,border:"none",cursor:"pointer",fontSize:13,fontWeight:700,...(activeTab===id?{background:AM,color:"#fff"}:{background:"#f3f4f6",color:"#6b7280"})}}>
+    {label} <span style={{fontSize:11,opacity:.7}}>({count})</span>
+  </button>;
 
   function handlePrintAll(){
     const rows=teachers.map(t=>{
@@ -812,46 +1058,83 @@ function Teachers({teachers,setTeachers,students,enrollments,setEnrollments,sett
       <div class="detail-grid">
         <div class="detail-item"><div class="lbl">Qualification</div><div class="val">${vt.qualification||"—"}</div></div>
         <div class="detail-item"><div class="lbl">Contact</div><div class="val">${vt.contact||"—"}</div></div>
-        <div class="detail-item"><div class="lbl">Address</div><div class="val">${vt.address||"—"}</div></div>
         <div class="detail-item"><div class="lbl">Join Date</div><div class="val">${vt.joinDate||"—"}</div></div>
         <div class="detail-item"><div class="lbl">Subjects</div><div class="val">${(vt.subjects||[]).join(", ")||"—"}</div></div>
         <div class="detail-item"><div class="lbl">Students</div><div class="val">${studentIds.length}</div></div>
       </div></div>
-      ${vt.qualDetails?`<div class="card"><b>Qualification Details:</b><p style="margin-top:4px;">${vt.qualDetails}</p></div>`:""}
       <h2>Weekly Schedule</h2><table><thead><tr><th>Day</th><th>Class Time</th></tr></thead><tbody>${schedRows}</tbody></table>
       ${studentIds.length?`<h2>Students (${studentIds.length})</h2><table><thead><tr><th>Name</th><th>Course</th><th>Subjects</th><th>Contact</th></tr></thead><tbody>${studentRows}</tbody></table>`:""}`);
   }
 
   return <div>
-    <SHdr title="Teachers" sub={`${teachers.length} on staff`} action={<div style={{display:"flex",gap:8}}><Btn onClick={handlePrintAll} color="ghost" style={{fontSize:12}}>🖨 Print List</Btn><Btn onClick={openAdd} color="amber">+ Add Teacher</Btn></div>}/>
+    <SHdr title="Teachers" sub={`${teachers.length} active · ${(archivedTeachers||[]).length} archived`}
+      action={<div style={{display:"flex",gap:8}}><Btn onClick={handlePrintAll} color="ghost" style={{fontSize:12}}>🖨 Print List</Btn><Btn onClick={openAdd} color="amber">+ Add Teacher</Btn></div>}/>
 
-    {teachers.length===0?<Empty icon="👩‍🏫" msg="No teachers yet."/>
-    :<div style={{display:"flex",flexDirection:"column",gap:10}}>
-      {teachers.map(t=>{
-        const myS=[...new Set(enrollments.filter(e=>e.teacherId===t.id).map(e=>e.studentId))];
-        const activeDays=DAYS.filter(d=>t.schedule?.[d]?.active);
-        return <Card key={t.id} style={{padding:14}}>
+    <div style={{display:"flex",gap:8,marginBottom:14}}>
+      <TabBtn id="active" label="Active" count={teachers.length}/>
+      <TabBtn id="archived" label="📦 Archived" count={(archivedTeachers||[]).length}/>
+    </div>
+
+    {activeTab==="active"&&<>
+      {teachers.length===0?<Empty icon="👩‍🏫" msg="No teachers yet."/>
+      :<div style={{display:"flex",flexDirection:"column",gap:10}}>
+        {teachers.map(t=>{
+          const myS=[...new Set(enrollments.filter(e=>e.teacherId===t.id).map(e=>e.studentId))];
+          const activeDays=DAYS.filter(d=>t.schedule?.[d]?.active);
+          return <Card key={t.id} style={{padding:14}}>
+            <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:10}}>
+              <div>
+                <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                  <span style={{fontWeight:800,color:N,fontSize:14}}>{t.name}</span>
+                  {t.teacherId&&<Badge color="amber">{t.teacherId}</Badge>}
+                  {t.restoredAt&&<Badge color="teal">↩ Restored</Badge>}
+                </div>
+                <div style={{fontSize:11,color:"#9ca3af",marginTop:3}}>{t.contact||"No contact"}{t.qualification?` · ${t.qualification}`:""}</div>
+                <div style={{display:"flex",flexWrap:"wrap",gap:3,marginTop:5}}>{(t.subjects||[]).map(s=><Badge key={s} color="teal">{s}</Badge>)}</div>
+                {activeDays.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:3,marginTop:5}}>{activeDays.map(d=><span key={d} style={{fontSize:10,background:"#d1fae5",color:"#065f46",border:"1px solid #a7f3d0",borderRadius:7,padding:"2px 7px",fontWeight:700}}>{DAYS_S[DAYS.indexOf(d)]} {t.schedule[d].startTime}</span>)}</div>}
+              </div>
+              <Badge color="navy">{myS.length} student{myS.length!==1?"s":""}</Badge>
+            </div>
+            <HR/>
+            <div style={{display:"flex",gap:14,flexWrap:"wrap"}}>
+              <button onClick={()=>setViewId(t.id)} style={{fontSize:12,fontWeight:700,color:N,background:"none",border:"none",cursor:"pointer"}}>View</button>
+              <button onClick={()=>openEdit(t)} style={{fontSize:12,fontWeight:700,color:TE,background:"none",border:"none",cursor:"pointer"}}>Edit</button>
+              <button onClick={()=>setArchiveModal(t)} style={{fontSize:12,fontWeight:700,color:"#ea580c",background:"none",border:"none",cursor:"pointer"}}>📦 Archive</button>
+              <button onClick={()=>del(t.id)} style={{fontSize:12,fontWeight:700,color:RE,background:"none",border:"none",cursor:"pointer"}}>Delete</button>
+            </div>
+          </Card>;
+        })}
+      </div>}
+    </>}
+
+    {activeTab==="archived"&&<>
+      <InfoBox color="blue">📦 Archived teachers keep all their data. Use <b>Restore</b> to make them active again.</InfoBox>
+      {(archivedTeachers||[]).length===0?<Empty icon="📦" msg="No archived teachers yet."/>
+      :<div style={{display:"flex",flexDirection:"column",gap:10}}>
+        {(archivedTeachers||[]).map(t=><Card key={t.id} style={{padding:14,borderLeft:"4px solid #ea580c",opacity:.9}}>
           <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:10}}>
             <div>
               <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
-                <span style={{fontWeight:800,color:N,fontSize:14}}>{t.name}</span>
-                {t.teacherId&&<Badge color="amber">{t.teacherId}</Badge>}
+                <span style={{fontWeight:800,color:"#374151",fontSize:14}}>{t.name}</span>
+                {t.teacherId&&<Badge color="gray">{t.teacherId}</Badge>}
+                <Badge color="orange">Inactive</Badge>
               </div>
               <div style={{fontSize:11,color:"#9ca3af",marginTop:3}}>{t.contact||"No contact"}{t.qualification?` · ${t.qualification}`:""}</div>
-              <div style={{display:"flex",flexWrap:"wrap",gap:3,marginTop:5}}>{(t.subjects||[]).map(s=><Badge key={s} color="teal">{s}</Badge>)}</div>
-              {activeDays.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:3,marginTop:5}}>{activeDays.map(d=><span key={d} style={{fontSize:10,background:"#d1fae5",color:"#065f46",border:"1px solid #a7f3d0",borderRadius:7,padding:"2px 7px",fontWeight:700}}>{DAYS_S[DAYS.indexOf(d)]} {t.schedule[d].startTime}</span>)}</div>}
+              <div style={{fontSize:11,marginTop:4,display:"flex",gap:8,flexWrap:"wrap"}}>
+                <span style={{color:"#9ca3af"}}>Archived: <b>{t.archivedAt}</b></span>
+                <span style={{color:"#ea580c",fontWeight:600}}>Reason: {t.archiveReason}</span>
+              </div>
+              <div style={{display:"flex",flexWrap:"wrap",gap:3,marginTop:5}}>{(t.subjects||[]).map(s=><Badge key={s} color="gray">{s}</Badge>)}</div>
             </div>
-            <Badge color="navy">{myS.length} student{myS.length!==1?"s":""}</Badge>
           </div>
           <HR/>
           <div style={{display:"flex",gap:14}}>
-            <button onClick={()=>setViewId(t.id)} style={{fontSize:12,fontWeight:700,color:N,background:"none",border:"none",cursor:"pointer"}}>View</button>
-            <button onClick={()=>openEdit(t)} style={{fontSize:12,fontWeight:700,color:TE,background:"none",border:"none",cursor:"pointer"}}>Edit</button>
-            <button onClick={()=>del(t.id)} style={{fontSize:12,fontWeight:700,color:RE,background:"none",border:"none",cursor:"pointer"}}>Delete</button>
+            <button onClick={()=>setRestoreModal(t)} style={{fontSize:12,fontWeight:700,color:GR,background:"none",border:"none",cursor:"pointer"}}>↩ Restore to Active</button>
+            <button onClick={()=>{if(!window.confirm("Permanently delete archived teacher?"))return;setArchivedTeachers(p=>p.filter(x=>x.id!==t.id));}} style={{fontSize:12,fontWeight:700,color:RE,background:"none",border:"none",cursor:"pointer"}}>Delete Permanently</button>
           </div>
-        </Card>;
-      })}
-    </div>}
+        </Card>)}
+      </div>}
+    </>}
 
     {modal&&<Modal title={editId?"Edit Teacher":"Add New Teacher"} onClose={()=>setModal(false)} wide>
       <p style={{fontSize:11,color:"#9ca3af",marginBottom:14}}>All starred fields are required.</p>
@@ -863,11 +1146,26 @@ function Teachers({teachers,setTeachers,students,enrollments,setEnrollments,sett
         <FI label="Join Date" type="date" value={form.joinDate} onChange={e=>sf("joinDate",e.target.value)}/>
       </div>
       <FI label="Address" value={form.address} onChange={e=>sf("address",e.target.value)}/>
-      <FTA label="Qualification Details (optional)" rows={3} value={form.qualDetails||""} onChange={e=>sf("qualDetails",e.target.value)} placeholder="e.g. M.Sc in Mathematics from Dhaka University…"/>
+      <FTA label="Qualification Details (optional)" rows={3} value={form.qualDetails||""} onChange={e=>sf("qualDetails",e.target.value)}/>
       <FM label="Subjects They Teach" req options={settings.subjects||[]} selected={form.subjects||[]} onChange={v=>sf("subjects",v)}/>
       <WeeklyScheduleEditor schedule={form.schedule||blankSched()} onChange={v=>sf("schedule",v)}/>
       <FTA label="Notes (optional)" value={form.notes} onChange={e=>sf("notes",e.target.value)}/>
       <div style={{display:"flex",gap:10,marginTop:6}}><Btn onClick={save} color="amber" style={{flex:1}}>{editId?"Update Teacher":"Add Teacher"}</Btn><Btn onClick={()=>setModal(false)} color="ghost">Cancel</Btn></div>
+    </Modal>}
+
+    {archiveModal&&<Modal title={`Archive Teacher — ${archiveModal.name}`} onClose={()=>setArchiveModal(null)}>
+      <ArchiveModal type="teacher" name={archiveModal.name} onConfirm={(reason)=>doArchive(archiveModal,reason)} onClose={()=>setArchiveModal(null)}/>
+    </Modal>}
+
+    {restoreModal&&<Modal title={`Restore — ${restoreModal.name}`} onClose={()=>setRestoreModal(null)}>
+      <InfoBox color="green">
+        <b>↩ Restore {restoreModal.name}?</b><br/>
+        Previously archived on <b>{restoreModal.archivedAt}</b> (Reason: {restoreModal.archiveReason}).
+      </InfoBox>
+      <div style={{display:"flex",gap:10}}>
+        <Btn onClick={()=>doRestore(restoreModal)} color="green" style={{flex:1}}>↩ Restore Teacher</Btn>
+        <Btn onClick={()=>setRestoreModal(null)} color="ghost">Cancel</Btn>
+      </div>
     </Modal>}
 
     {vt&&<Modal title="Teacher Profile" onClose={()=>setViewId(null)} wide>
@@ -889,8 +1187,6 @@ function Teachers({teachers,setTeachers,students,enrollments,setEnrollments,sett
           </div>;})}
         </div>
       </div>
-
-      {/* Students grouped by subject */}
       <div style={{marginBottom:10}}>
         <div style={{fontSize:11,fontWeight:700,color:"#9ca3af",textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:8}}>Students by Subject</div>
         {(vt.subjects||[]).map(subj=>{
@@ -908,7 +1204,6 @@ function Teachers({teachers,setTeachers,students,enrollments,setEnrollments,sett
           </div>;
         })}
       </div>
-
       {vt.notes&&<div style={{background:"#fffbeb",borderRadius:10,padding:10,fontSize:13,color:"#92400e",marginTop:10}}><b>Notes: </b>{vt.notes}</div>}
     </Modal>}
   </div>;
@@ -921,7 +1216,6 @@ function Fees({students,feeRecords,setFeeRecords,enrollments,teachers,settings})
   const [form,setForm]=useState(blank);const sf=(k,v)=>setForm(p=>({...p,[k]:v}));
   const monthOpts=useMemo(()=>{const o=[];const d=new Date();for(let i=0;i<18;i++){o.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`);d.setMonth(d.getMonth()-1);}return o;},[]);
   const mRecs=feeRecords.filter(r=>r.month===month);
-  const paidIds=new Set(mRecs.filter(r=>r.status==="paid").map(r=>r.studentId));
   const collected=feeRecords.filter(r=>r.month===month).reduce((s,r)=>s+(+r.amountPaid||0),0);
   const totalDue=students.reduce((s,st)=>s+(+st.monthlyFee||0),0);
   const pct=totalDue>0?Math.min(100,Math.round(collected/totalDue*100)):0;
@@ -969,7 +1263,7 @@ function Fees({students,feeRecords,setFeeRecords,enrollments,teachers,settings})
   }
 
   return <div>
-    <SHdr title="Monthly Fees" sub="Track all student fee payments — partial payments supported" action={<div style={{display:"flex",gap:8}}><Btn onClick={handlePrint} color="ghost" style={{fontSize:12}}>🖨 Print</Btn><Btn onClick={openCustom} color="green">+ Record Payment</Btn></div>}/>
+    <SHdr title="Monthly Fees" sub="Track all student fee payments" action={<div style={{display:"flex",gap:8}}><Btn onClick={handlePrint} color="ghost" style={{fontSize:12}}>🖨 Print</Btn><Btn onClick={openCustom} color="green">+ Record Payment</Btn></div>}/>
     <Card style={{padding:16,marginBottom:16}}>
       <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
         <div><FL label="Select Month"/><select value={month} onChange={e=>setMonth(e.target.value)} style={{...IS,width:"auto",fontWeight:700,color:N}}>{monthOpts.map(m=><option key={m} value={m}>{mLabel(m)}</option>)}</select></div>
@@ -1124,161 +1418,76 @@ function TeacherAttendance({attendance,setAttendance,teachers,settings}){
 }
 
 // ── EXAM RESULTS ──────────────────────────────────────────────────
-const GRADE_BOUNDARIES=[
-  {grade:"A+",min:90},
-  {grade:"A",min:80},
-  {grade:"B+",min:70},
-  {grade:"B",min:60},
-  {grade:"C",min:50},
-  {grade:"D",min:40},
-  {grade:"F",min:0}
-];
-function autoGrade(score,total){
-  if(!score||!total||isNaN(+score)||isNaN(+total)||+total===0)return"";
-  const pct=(+score/+total)*100;
-  for(const b of GRADE_BOUNDARIES){if(pct>=b.min)return b.grade;}
-  return"F";
-}
+const GRADE_BOUNDARIES=[{grade:"A+",min:90},{grade:"A",min:80},{grade:"B+",min:70},{grade:"B",min:60},{grade:"C",min:50},{grade:"D",min:40},{grade:"F",min:0}];
+function autoGrade(score,total){if(!score||!total||isNaN(+score)||isNaN(+total)||+total===0)return"";const pct=(+score/+total)*100;for(const b of GRADE_BOUNDARIES){if(pct>=b.min)return b.grade;}return"F";}
 
 function Results({results,setResults,students,teachers,settings}){
-  const [modal,setModal]=useState(false);
-  const [editId,setEditId]=useState(null);
-  const [viewStudentId,setViewStudentId]=useState("");
-  const [filterExam,setFilterExam]=useState("");
-  const [filterSubject,setFilterSubject]=useState("");
-  const [filterTeacher,setFilterTeacher]=useState("");
-  const [filterCourse,setFilterCourse]=useState("");
-
+  const [modal,setModal]=useState(false);const [editId,setEditId]=useState(null);const [viewStudentId,setViewStudentId]=useState("");const [filterExam,setFilterExam]=useState("");const [filterSubject,setFilterSubject]=useState("");const [filterTeacher,setFilterTeacher]=useState("");const [filterCourse,setFilterCourse]=useState("");
   const blank={studentId:"",examName:"",examType:"",subject:"",teacherId:"",totalMarks:"",score:"",grade:"",date:today(),notes:""};
-  const [form,setForm]=useState(blank);
-  const sf=(k,v)=>setForm(p=>({...p,[k]:v}));
-
+  const [form,setForm]=useState(blank);const sf=(k,v)=>setForm(p=>({...p,[k]:v}));
   const allCourses=[...new Set(students.map(s=>s.course).filter(Boolean))];
   const allSubjects=settings.subjects||[];
   const allExamNames=[...new Set(results.map(r=>r.examName).filter(Boolean))];
   const EXAM_TYPES=["Class Test","Mock Exam","Term Final","Monthly Test","Unit Test","Practice Paper","Board Mock","Other"];
-
-  const filtered=results.filter(r=>{
-    const st=students.find(s=>s.id===r.studentId);
-    const matchStudent=!viewStudentId||r.studentId===viewStudentId;
-    const matchExam=!filterExam||r.examName===filterExam;
-    const matchSubject=!filterSubject||r.subject===filterSubject;
-    const matchTeacher=!filterTeacher||r.teacherId===filterTeacher;
-    const matchCourse=!filterCourse||(st?.course||"")===filterCourse;
-    return matchStudent&&matchExam&&matchSubject&&matchTeacher&&matchCourse;
-  }).sort((a,b)=>b.date.localeCompare(a.date));
-
+  const filtered=results.filter(r=>{const st=students.find(s=>s.id===r.studentId);const matchStudent=!viewStudentId||r.studentId===viewStudentId;const matchExam=!filterExam||r.examName===filterExam;const matchSubject=!filterSubject||r.subject===filterSubject;const matchTeacher=!filterTeacher||r.teacherId===filterTeacher;const matchCourse=!filterCourse||(st?.course||"")===filterCourse;return matchStudent&&matchExam&&matchSubject&&matchTeacher&&matchCourse;}).sort((a,b)=>b.date.localeCompare(a.date));
   function openAdd(){setEditId(null);setForm({...blank});setModal(true);}
   function openEdit(r){setEditId(r.id);setForm({...r});setModal(true);}
-
-  function save(){
-    if(!form.studentId)return alert("Select a student.");
-    if(!form.examName.trim())return alert("Exam name is required.");
-    if(!form.subject)return alert("Subject is required.");
-    if(!form.totalMarks||!form.score)return alert("Total marks and score are required.");
-    if(+form.score>+form.totalMarks)return alert("Score cannot exceed total marks.");
-    const grade=form.grade||autoGrade(form.score,form.totalMarks);
-    const rec={...form,grade,score:+form.score,totalMarks:+form.totalMarks};
-    if(editId)setResults(p=>p.map(r=>r.id===editId?{...rec,id:editId}:r));
-    else setResults(p=>[...p,{...rec,id:uid()}]);
-    setModal(false);
-  }
-
+  function save(){if(!form.studentId)return alert("Select a student.");if(!form.examName.trim())return alert("Exam name is required.");if(!form.subject)return alert("Subject is required.");if(!form.totalMarks||!form.score)return alert("Total marks and score are required.");if(+form.score>+form.totalMarks)return alert("Score cannot exceed total marks.");const grade=form.grade||autoGrade(form.score,form.totalMarks);const rec={...form,grade,score:+form.score,totalMarks:+form.totalMarks};if(editId)setResults(p=>p.map(r=>r.id===editId?{...rec,id:editId}:r));else setResults(p=>[...p,{...rec,id:uid()}]);setModal(false);}
   function del(id){if(!window.confirm("Delete this result?"))return;setResults(p=>p.filter(r=>r.id!==id));}
-
-  const GRADE_COLOR={
-    "A+":"green","A":"green","B+":"teal","B":"blue","C":"amber","D":"amber","F":"red","":" gray"
-  };
-
-  function handlePrint(){
-    const rows=filtered.map(r=>{
-      const st=students.find(s=>s.id===r.studentId);
-      const t=teachers.find(t=>t.id===r.teacherId);
-      const pct=r.totalMarks?(((r.score||0)/r.totalMarks)*100).toFixed(1)+"%":"—";
-      return `<tr>
-        <td>${r.date}</td>
-        <td><b>${st?.name||"—"}</b> ${st?.studentId?"("+st.studentId+")":""}</td>
-        <td>${st?.course||"—"}</td>
-        <td>${r.examName}</td>
-        <td>${r.examType||"—"}</td>
-        <td>${r.subject||"—"}</td>
-        <td>${t?.name||"—"}</td>
-        <td>${r.score}/${r.totalMarks} (${pct})</td>
-        <td><span class="badge badge-${r.grade==="A+"||r.grade==="A"?"green":r.grade==="F"?"red":"amber"}">${r.grade||"—"}</span></td>
-      </tr>`;
-    }).join("");
-    printContent("Exam Results",`
-      <p style="font-size:12px;color:#6b7280;margin-bottom:12px;">Showing ${filtered.length} result(s)</p>
-      <table><thead><tr><th>Date</th><th>Student</th><th>Course</th><th>Exam</th><th>Type</th><th>Subject</th><th>Teacher</th><th>Score</th><th>Grade</th></tr></thead><tbody>${rows}</tbody></table>`);
-  }
-
+  const GRADE_COLOR={"A+":"green","A":"green","B+":"teal","B":"blue","C":"amber","D":"amber","F":"red","":" gray"};
+  function handlePrint(){const rows=filtered.map(r=>{const st=students.find(s=>s.id===r.studentId);const t=teachers.find(t=>t.id===r.teacherId);const pct=r.totalMarks?(((r.score||0)/r.totalMarks)*100).toFixed(1)+"%":"—";return `<tr><td>${r.date}</td><td><b>${st?.name||"—"}</b></td><td>${st?.course||"—"}</td><td>${r.examName}</td><td>${r.subject||"—"}</td><td>${t?.name||"—"}</td><td>${r.score}/${r.totalMarks} (${pct})</td><td><span class="badge badge-${r.grade==="A+"||r.grade==="A"?"green":r.grade==="F"?"red":"amber"}">${r.grade||"—"}</span></td></tr>`;}).join("");printContent("Exam Results",`<p style="font-size:12px;color:#6b7280;margin-bottom:12px;">Showing ${filtered.length} result(s)</p><table><thead><tr><th>Date</th><th>Student</th><th>Course</th><th>Exam</th><th>Subject</th><th>Teacher</th><th>Score</th><th>Grade</th></tr></thead><tbody>${rows}</tbody></table>`);}
   return <div>
-    <SHdr title="Exam Results" sub="Record and track student results across all exams" action={<div style={{display:"flex",gap:8}}><Btn onClick={handlePrint} color="ghost" style={{fontSize:12}}>🖨 Print</Btn><Btn onClick={openAdd} color="purple">+ Add Result</Btn></div>}/>
-
-    {/* Filters */}
+    <SHdr title="Exam Results" sub="Record and track student results" action={<div style={{display:"flex",gap:8}}><Btn onClick={handlePrint} color="ghost" style={{fontSize:12}}>🖨 Print</Btn><Btn onClick={openAdd} color="purple">+ Add Result</Btn></div>}/>
     <Card style={{padding:14,marginBottom:14}}>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
         <select value={viewStudentId} onChange={e=>setViewStudentId(e.target.value)} style={{...IS,fontSize:12}}><option value="">All Students</option>{students.map(s=><option key={s.id} value={s.id}>{s.name} {s.studentId?"("+s.studentId+")":""}</option>)}</select>
         <select value={filterCourse} onChange={e=>setFilterCourse(e.target.value)} style={{...IS,fontSize:12}}><option value="">All Courses</option>{allCourses.map(c=><option key={c} value={c}>{c}</option>)}</select>
         <select value={filterSubject} onChange={e=>setFilterSubject(e.target.value)} style={{...IS,fontSize:12}}><option value="">All Subjects</option>{allSubjects.map(s=><option key={s} value={s}>{s}</option>)}</select>
-        <select value={filterTeacher} onChange={e=>setFilterTeacher(e.target.value)} style={{...IS,fontSize:12}}><option value="">All Teachers</option>{teachers.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select>
         <select value={filterExam} onChange={e=>setFilterExam(e.target.value)} style={{...IS,fontSize:12}}><option value="">All Exams</option>{allExamNames.map(e=><option key={e} value={e}>{e}</option>)}</select>
       </div>
-      {(viewStudentId||filterCourse||filterSubject||filterTeacher||filterExam)&&<button onClick={()=>{setViewStudentId("");setFilterCourse("");setFilterSubject("");setFilterTeacher("");setFilterExam("");}} style={{fontSize:11,fontWeight:700,color:RE,background:"none",border:"none",cursor:"pointer"}}>✕ Clear filters</button>}
+      {(viewStudentId||filterCourse||filterSubject||filterExam)&&<button onClick={()=>{setViewStudentId("");setFilterCourse("");setFilterSubject("");setFilterExam("");}} style={{fontSize:11,fontWeight:700,color:RE,background:"none",border:"none",cursor:"pointer"}}>✕ Clear filters</button>}
     </Card>
-
-    {/* Summary cards */}
     {filtered.length>0&&<div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8,marginBottom:14}}>
       <StatCard label="Results" value={filtered.length} icon="📋" from={PU} to="#6d28d9"/>
       <StatCard label="Avg Score %" value={(filtered.filter(r=>r.totalMarks).reduce((s,r)=>s+(r.score/r.totalMarks)*100,0)/filtered.filter(r=>r.totalMarks).length||0).toFixed(1)+"%"} icon="📊" from={TE} to="#0f766e"/>
       <StatCard label="A/A+ Grades" value={filtered.filter(r=>r.grade==="A+"||r.grade==="A").length} icon="🏆" from={GR} to="#047857"/>
       <StatCard label="Failing" value={filtered.filter(r=>r.grade==="F").length} icon="⚠️" from={RE} to="#b91c1c"/>
     </div>}
-
     {filtered.length===0?<Empty icon="📋" msg="No results found."/>
     :<div style={{display:"flex",flexDirection:"column",gap:8}}>
-      {filtered.map(r=>{
-        const st=students.find(s=>s.id===r.studentId);
-        const t=teachers.find(t=>t.id===r.teacherId);
-        const pct=r.totalMarks?((r.score||0)/r.totalMarks*100).toFixed(1):"—";
-        const gc=GRADE_COLOR[r.grade||""]||"gray";
-        return <Card key={r.id} style={{padding:14,borderLeft:`4px solid ${r.grade==="A+"||r.grade==="A"?GR:r.grade==="F"?RE:r.grade==="B+"||r.grade==="B"?TE:AM}`}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10}}>
-            <div style={{flex:1}}>
-              <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",marginBottom:3}}>
-                <span style={{fontWeight:800,color:N,fontSize:13}}>{st?.name||"Unknown Student"}</span>
-                {st?.studentId&&<Badge color="navy">{st.studentId}</Badge>}
-                {st?.course&&<Badge color="purple">{st.course}</Badge>}
-              </div>
-              <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:3}}>
-                <Badge color="purple">{r.examName}</Badge>
-                {r.examType&&<Badge color="gray">{r.examType}</Badge>}
-                {r.subject&&<Badge color="blue">{r.subject}</Badge>}
-                {t&&<span style={{fontSize:11,color:"#6b7280"}}>· {t.name}</span>}
-              </div>
-              <div style={{fontSize:11,color:"#9ca3af"}}>{r.date}{r.notes?` · ${r.notes}`:""}</div>
+      {filtered.map(r=>{const st=students.find(s=>s.id===r.studentId);const t=teachers.find(t=>t.id===r.teacherId);const pct=r.totalMarks?((r.score||0)/r.totalMarks*100).toFixed(1):"—";const gc=GRADE_COLOR[r.grade||""]||"gray";return <Card key={r.id} style={{padding:14,borderLeft:`4px solid ${r.grade==="A+"||r.grade==="A"?GR:r.grade==="F"?RE:r.grade==="B+"||r.grade==="B"?TE:AM}`}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10}}>
+          <div style={{flex:1}}>
+            <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",marginBottom:3}}>
+              <span style={{fontWeight:800,color:N,fontSize:13}}>{st?.name||"Unknown"}</span>
+              {st?.studentId&&<Badge color="navy">{st.studentId}</Badge>}
+              {st?.course&&<Badge color="purple">{st.course}</Badge>}
             </div>
-            <div style={{textAlign:"right",flexShrink:0}}>
-              <div style={{fontWeight:800,color:N,fontSize:16}}>{r.score}<span style={{fontSize:11,fontWeight:600,color:"#9ca3af"}}>/{r.totalMarks}</span></div>
-              <div style={{fontSize:11,color:"#9ca3af"}}>{pct}%</div>
-              {r.grade&&<div style={{marginTop:3}}><Badge color={gc}>{r.grade}</Badge></div>}
+            <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:3}}>
+              <Badge color="purple">{r.examName}</Badge>
+              {r.examType&&<Badge color="gray">{r.examType}</Badge>}
+              {r.subject&&<Badge color="blue">{r.subject}</Badge>}
+              {t&&<span style={{fontSize:11,color:"#6b7280"}}>· {t.name}</span>}
             </div>
+            <div style={{fontSize:11,color:"#9ca3af"}}>{r.date}{r.notes?` · ${r.notes}`:""}</div>
           </div>
-          <HR/>
-          <div style={{display:"flex",gap:14}}>
-            <button onClick={()=>openEdit(r)} style={{fontSize:12,fontWeight:700,color:TE,background:"none",border:"none",cursor:"pointer"}}>Edit</button>
-            <button onClick={()=>del(r.id)} style={{fontSize:12,fontWeight:700,color:RE,background:"none",border:"none",cursor:"pointer"}}>Delete</button>
+          <div style={{textAlign:"right",flexShrink:0}}>
+            <div style={{fontWeight:800,color:N,fontSize:16}}>{r.score}<span style={{fontSize:11,fontWeight:600,color:"#9ca3af"}}>/{r.totalMarks}</span></div>
+            <div style={{fontSize:11,color:"#9ca3af"}}>{pct}%</div>
+            {r.grade&&<div style={{marginTop:3}}><Badge color={gc}>{r.grade}</Badge></div>}
           </div>
-        </Card>;
-      })}
+        </div>
+        <HR/>
+        <div style={{display:"flex",gap:14}}>
+          <button onClick={()=>openEdit(r)} style={{fontSize:12,fontWeight:700,color:TE,background:"none",border:"none",cursor:"pointer"}}>Edit</button>
+          <button onClick={()=>del(r.id)} style={{fontSize:12,fontWeight:700,color:RE,background:"none",border:"none",cursor:"pointer"}}>Delete</button>
+        </div>
+      </Card>;})}
     </div>}
-
     {modal&&<Modal title={editId?"Edit Result":"Add Exam Result"} onClose={()=>setModal(false)} wide>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 14px"}}>
-        <div style={{gridColumn:"1/-1"}}>
-          <FSel label="Student" req options={students.map(s=>({value:s.id,label:`${s.name}${s.studentId?` (${s.studentId})`:""}`}))} value={form.studentId} onChange={e=>sf("studentId",e.target.value)}/>
-        </div>
-        <FI label="Exam Name" req value={form.examName} onChange={e=>sf("examName",e.target.value)} placeholder="e.g. Mid-Term 2025, Monthly Test May"/>
+        <div style={{gridColumn:"1/-1"}}><FSel label="Student" req options={students.map(s=>({value:s.id,label:`${s.name}${s.studentId?` (${s.studentId})`:""}`}))} value={form.studentId} onChange={e=>sf("studentId",e.target.value)}/></div>
+        <FI label="Exam Name" req value={form.examName} onChange={e=>sf("examName",e.target.value)} placeholder="e.g. Mid-Term 2025"/>
         <FSel label="Exam Type" req options={EXAM_TYPES} value={form.examType} onChange={e=>sf("examType",e.target.value)}/>
         <FSel label="Subject" req options={allSubjects} value={form.subject} onChange={e=>sf("subject",e.target.value)}/>
         <FSel label="Teacher (optional)" options={teachers.map(t=>({value:t.id,label:t.name}))} value={form.teacherId} onChange={e=>sf("teacherId",e.target.value)}/>
@@ -1287,9 +1496,7 @@ function Results({results,setResults,students,teachers,settings}){
         <FI label="Date" req type="date" value={form.date} onChange={e=>sf("date",e.target.value)}/>
         <div style={{marginBottom:14}}>
           <FL label="Grade"/>
-          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-            {GRADE_BOUNDARIES.map(b=><button key={b.grade} type="button" onClick={()=>sf("grade",b.grade)} style={{padding:"5px 10px",borderRadius:7,border:`1.5px solid ${form.grade===b.grade?N:"#e5e7eb"}`,background:form.grade===b.grade?N:"#fff",color:form.grade===b.grade?"#fff":"#6b7280",fontSize:12,fontWeight:700}}>{b.grade}</button>)}
-          </div>
+          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>{GRADE_BOUNDARIES.map(b=><button key={b.grade} type="button" onClick={()=>sf("grade",b.grade)} style={{padding:"5px 10px",borderRadius:7,border:`1.5px solid ${form.grade===b.grade?N:"#e5e7eb"}`,background:form.grade===b.grade?N:"#fff",color:form.grade===b.grade?"#fff":"#6b7280",fontSize:12,fontWeight:700}}>{b.grade}</button>)}</div>
           {form.score&&form.totalMarks&&<p style={{fontSize:11,color:"#9ca3af",marginTop:4}}>Auto-grade: <b>{autoGrade(form.score,form.totalMarks)}</b> ({((+form.score/+form.totalMarks)*100).toFixed(1)}%)</p>}
         </div>
       </div>
@@ -1313,26 +1520,12 @@ function SideIncome({sideIncome,setSideIncome,students,settings}){
   function updateLine(id,k,v){sf("lineItems",form.lineItems.map(l=>l.id===id?{...l,[k]:v}:l));}
   function openAdd(){setEditId(null);setForm({...blank,lineItems:[{id:uid(),subject:"",category:"",amount:""}]});setModal(true);}
   function openEdit(r){setEditId(r.id);setForm({...blank,...r,lineItems:r.lineItems||[{id:uid(),subject:"",category:"",amount:String(r.totalAmount||"")}]});setModal(true);}
-  function save(){
-    if(!form.type)return alert("Income type is required.");
-    const lineItems=form.lineItems.filter(l=>l.amount);
-    if(!lineItems.length)return alert("Add at least one item with an amount.");
-    const totalAmount=lineItems.reduce((s,l)=>s+(+l.amount||0),0);
-    const rec={...form,lineItems,totalAmount};
-    if(editId)setSideIncome(p=>p.map(r=>r.id===editId?{...rec,id:editId}:r));
-    else setSideIncome(p=>[...p,{...rec,id:uid()}]);
-    setModal(false);
-  }
+  function save(){if(!form.type)return alert("Income type is required.");const lineItems=form.lineItems.filter(l=>l.amount);if(!lineItems.length)return alert("Add at least one item with an amount.");const totalAmount=lineItems.reduce((s,l)=>s+(+l.amount||0),0);const rec={...form,lineItems,totalAmount};if(editId)setSideIncome(p=>p.map(r=>r.id===editId?{...rec,id:editId}:r));else setSideIncome(p=>[...p,{...rec,id:uid()}]);setModal(false);}
   function del(id){if(!window.confirm("Delete?"))return;setSideIncome(p=>p.filter(r=>r.id!==id));}
   const FEE_CATS=["Admission Fee","Lab Fee","Book Fee","Mock Test Fee","Registration Fee","Exam Fee","Material Fee","Other"];
-
-  function handlePrint(){
-    const rows=filtered.map(r=>{const st=students.find(s=>s.id===r.studentId);return `<tr><td>${r.date}</td><td>${r.type}</td><td>${st?.name||"—"}</td><td>${(r.lineItems||[]).filter(l=>l.amount).map(l=>`${l.category||""}${l.subject?" ("+l.subject+")":""}: ${fmt(l.amount)}`).join("; ")}</td><td><b>${fmt(r.totalAmount)}</b></td><td>${r.paymentMethod||"—"}</td></tr>`;}).join("");
-    printContent("Side Income",`<table><thead><tr><th>Date</th><th>Type</th><th>Student</th><th>Items</th><th>Total</th><th>Method</th></tr></thead><tbody>${rows}</tbody><tfoot><tr><td colspan="4" style="text-align:right;font-weight:800;">Total</td><td><b>${fmt(total)}</b></td><td></td></tr></tfoot></table>`);
-  }
-
+  function handlePrint(){const rows=filtered.map(r=>{const st=students.find(s=>s.id===r.studentId);return `<tr><td>${r.date}</td><td>${r.type}</td><td>${st?.name||"—"}</td><td>${(r.lineItems||[]).filter(l=>l.amount).map(l=>`${l.category||""}${l.subject?" ("+l.subject+")":""}: ${fmt(l.amount)}`).join("; ")}</td><td><b>${fmt(r.totalAmount)}</b></td><td>${r.paymentMethod||"—"}</td></tr>`;}).join("");printContent("Side Income",`<table><thead><tr><th>Date</th><th>Type</th><th>Student</th><th>Items</th><th>Total</th><th>Method</th></tr></thead><tbody>${rows}</tbody><tfoot><tr><td colspan="4" style="text-align:right;font-weight:800;">Total</td><td><b>${fmt(total)}</b></td><td></td></tr></tfoot></table>`);}
   return <div>
-    <SHdr title="Side Income" sub="Admission fees, lab fees, book fees — separate from monthly fees" action={<div style={{display:"flex",gap:8}}><Btn onClick={handlePrint} color="ghost" style={{fontSize:12}}>🖨 Print</Btn><Btn onClick={openAdd} color="purple">+ Add Income</Btn></div>}/>
+    <SHdr title="Side Income" sub="Admission fees, lab fees, book fees" action={<div style={{display:"flex",gap:8}}><Btn onClick={handlePrint} color="ghost" style={{fontSize:12}}>🖨 Print</Btn><Btn onClick={openAdd} color="purple">+ Add Income</Btn></div>}/>
     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
       <StatCard label="This Month" value={fmt(mTotal)} icon="💡" from={PU} to="#6d28d9"/>
       <StatCard label={filterM?mLabel(filterM)+" Total":"All Time"} value={fmt(total)} icon="📊" from={N} to="#1e3a8a"/>
@@ -1394,15 +1587,7 @@ function Expenses({expenses,setExpenses,settings}){
   function openEdit(r){setEditId(r.id);setForm({...r});setModal(true);}
   function save(){if(!form.amount)return alert("Amount required.");if(editId)setExpenses(p=>p.map(r=>r.id===editId?{...form,id:editId,amount:+form.amount}:r));else setExpenses(p=>[...p,{...form,id:uid(),amount:+form.amount}]);setModal(false);}
   function del(id){if(!window.confirm("Delete?"))return;setExpenses(p=>p.filter(r=>r.id!==id));}
-
-  function handlePrint(){
-    const catRows=Object.entries(byCat).sort((a,b)=>b[1]-a[1]).map(([cat,amt])=>`<tr><td>${cat}</td><td><b>${fmt(amt)}</b></td></tr>`).join("");
-    const rows=filtered.map(r=>`<tr><td>${r.date}</td><td><b>${r.category||"—"}</b></td><td>${r.description||"—"}</td><td>${fmt(r.amount)}</td><td>${r.notes||"—"}</td></tr>`).join("");
-    printContent("Expenses",`
-      <h2>By Category</h2><table><thead><tr><th>Category</th><th>Total</th></tr></thead><tbody>${catRows}<tr><td><b>GRAND TOTAL</b></td><td><b>${fmt(total)}</b></td></tr></tbody></table>
-      <h2>All Expenses</h2><table><thead><tr><th>Date</th><th>Category</th><th>Description</th><th>Amount</th><th>Notes</th></tr></thead><tbody>${rows}</tbody></table>`);
-  }
-
+  function handlePrint(){const catRows=Object.entries(byCat).sort((a,b)=>b[1]-a[1]).map(([cat,amt])=>`<tr><td>${cat}</td><td><b>${fmt(amt)}</b></td></tr>`).join("");const rows=filtered.map(r=>`<tr><td>${r.date}</td><td><b>${r.category||"—"}</b></td><td>${r.description||"—"}</td><td>${fmt(r.amount)}</td><td>${r.notes||"—"}</td></tr>`).join("");printContent("Expenses",`<h2>By Category</h2><table><thead><tr><th>Category</th><th>Total</th></tr></thead><tbody>${catRows}<tr><td><b>GRAND TOTAL</b></td><td><b>${fmt(total)}</b></td></tr></tbody></table><h2>All Expenses</h2><table><thead><tr><th>Date</th><th>Category</th><th>Description</th><th>Amount</th><th>Notes</th></tr></thead><tbody>${rows}</tbody></table>`);}
   return <div>
     <SHdr title="Expenses" sub="Track all coaching expenses" action={<div style={{display:"flex",gap:8}}><Btn onClick={handlePrint} color="ghost" style={{fontSize:12}}>🖨 Print</Btn><Btn onClick={openAdd} color="red">+ Add Expense</Btn></div>}/>
     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
@@ -1412,9 +1597,7 @@ function Expenses({expenses,setExpenses,settings}){
     <select value={filterM} onChange={e=>setFilterM(e.target.value)} style={{...IS,marginBottom:14}}><option value="">All Time</option>{monthOpts.map(m=><option key={m} value={m}>{mLabel(m)}</option>)}</select>
     {Object.keys(byCat).length>0&&<Card style={{padding:14,marginBottom:14}}>
       <p style={{fontSize:11,fontWeight:700,color:"#9ca3af",textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:8}}>By Category</p>
-      {Object.entries(byCat).sort((a,b)=>b[1]-a[1]).map(([cat,amt])=><div key={cat} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"4px 0",borderBottom:"1px solid #f9fafb"}}>
-        <span style={{fontSize:13,fontWeight:600,color:"#374151"}}>{cat}</span><Badge color="red">{fmt(amt)}</Badge>
-      </div>)}
+      {Object.entries(byCat).sort((a,b)=>b[1]-a[1]).map(([cat,amt])=><div key={cat} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"4px 0",borderBottom:"1px solid #f9fafb"}}><span style={{fontSize:13,fontWeight:600,color:"#374151"}}>{cat}</span><Badge color="red">{fmt(amt)}</Badge></div>)}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"7px 0"}}><span style={{fontSize:13,fontWeight:800,color:N}}>Total</span><span style={{fontWeight:800,color:RE,fontSize:14}}>{fmt(total)}</span></div>
     </Card>}
     {filtered.length===0?<Empty icon="📤" msg="No expenses recorded."/>
@@ -1432,8 +1615,8 @@ function Expenses({expenses,setExpenses,settings}){
     </Card>)}
     </div>}
     {modal&&<Modal title={editId?"Edit Expense":"Add Expense"} onClose={()=>setModal(false)}>
-      {(settings.expenseCategories||[]).length>0?<FSel label="Category" options={settings.expenseCategories} value={form.category} onChange={e=>sf("category",e.target.value)}/>:<FI label="Category" value={form.category} onChange={e=>sf("category",e.target.value)} placeholder="e.g. Rent (add categories in Settings)"/>}
-      <FI label="Description" value={form.description} onChange={e=>sf("description",e.target.value)} placeholder="What was this expense for?"/>
+      {(settings.expenseCategories||[]).length>0?<FSel label="Category" options={settings.expenseCategories} value={form.category} onChange={e=>sf("category",e.target.value)}/>:<FI label="Category" value={form.category} onChange={e=>sf("category",e.target.value)} placeholder="e.g. Rent"/>}
+      <FI label="Description" value={form.description} onChange={e=>sf("description",e.target.value)}/>
       <FI label="Amount (৳)" req type="number" value={form.amount} onChange={e=>sf("amount",e.target.value)}/>
       <FI label="Date" req type="date" value={form.date} onChange={e=>sf("date",e.target.value)}/>
       <FTA label="Notes (optional)" value={form.notes} onChange={e=>sf("notes",e.target.value)}/>
@@ -1450,7 +1633,6 @@ function Events({events,setEvents,students}){
   const [pForm,setPForm]=useState({studentId:"",amount:"",notes:""});
   const [eForm,setEForm]=useState({description:"",amount:"",notes:""});
   const ve=events.find(e=>e.id===viewId);
-
   function openAdd(){setEditId(null);setForm({...blank,studentPayments:[],eventExpenses:[]});setModal(true);}
   function openEdit(ev){setEditId(ev.id);setForm({...ev});setModal(true);}
   function save(){if(!form.name.trim())return alert("Event name required.");if(editId)setEvents(p=>p.map(e=>e.id===editId?{...form,id:editId}:e));else setEvents(p=>[...p,{...form,id:uid()}]);setModal(false);}
@@ -1459,31 +1641,12 @@ function Events({events,setEvents,students}){
   function removeStudentPay(evId,pid){setEvents(p=>p.map(e=>e.id!==evId?e:{...e,studentPayments:(e.studentPayments||[]).filter(x=>x.id!==pid)}));}
   function addEvExp(evId){if(!eForm.amount)return alert("Amount required.");setEvents(p=>p.map(e=>e.id!==evId?e:{...e,eventExpenses:[...(e.eventExpenses||[]),{id:uid(),...eForm,amount:+eForm.amount}]}));setEForm({description:"",amount:"",notes:""});setExpModal(false);}
   function removeEvExp(evId,eid){setEvents(p=>p.map(e=>e.id!==evId?e:{...e,eventExpenses:(e.eventExpenses||[]).filter(x=>x.id!==eid)}));}
-
-  function handlePrintEvent(ev){
-    const inc=(ev.studentPayments||[]).reduce((s,p)=>s+(+p.amount||0),0);
-    const exp=(ev.eventExpenses||[]).reduce((s,e)=>s+(+e.amount||0),0);
-    const payRows=(ev.studentPayments||[]).map(p=>{const st=students.find(s=>s.id===p.studentId);return `<tr><td>${st?.name||"—"}</td><td>${fmt(p.amount)}</td><td>${p.notes||"—"}</td></tr>`;}).join("");
-    const expRows=(ev.eventExpenses||[]).map(e=>`<tr><td>${e.description||"—"}</td><td>${fmt(e.amount)}</td><td>${e.notes||"—"}</td></tr>`).join("");
-    printContent(`Event — ${ev.name}`,`
-      <div class="card"><h3>${ev.name}</h3><p style="font-size:12px;color:#6b7280;">${ev.date}${ev.description?" · "+ev.description:""}</p>
-      <div class="detail-grid" style="margin-top:10px;">
-        <div class="detail-item"><div class="lbl">Collected</div><div class="val">${fmt(inc)}</div></div>
-        <div class="detail-item"><div class="lbl">Expenses</div><div class="val">${fmt(exp)}</div></div>
-        <div class="detail-item"><div class="lbl">Net</div><div class="val">${fmt(inc-exp)}</div></div>
-        <div class="detail-item"><div class="lbl">Students</div><div class="val">${(ev.studentPayments||[]).length}</div></div>
-      </div></div>
-      ${payRows?`<h2>Student Payments</h2><table><thead><tr><th>Student</th><th>Amount</th><th>Notes</th></tr></thead><tbody>${payRows}</tbody></table>`:""}
-      ${expRows?`<h2>Event Expenses</h2><table><thead><tr><th>Description</th><th>Amount</th><th>Notes</th></tr></thead><tbody>${expRows}</tbody></table>`:""}`);
-  }
-
+  function handlePrintEvent(ev){const inc=(ev.studentPayments||[]).reduce((s,p)=>s+(+p.amount||0),0);const exp=(ev.eventExpenses||[]).reduce((s,e)=>s+(+e.amount||0),0);const payRows=(ev.studentPayments||[]).map(p=>{const st=students.find(s=>s.id===p.studentId);return `<tr><td>${st?.name||"—"}</td><td>${fmt(p.amount)}</td><td>${p.notes||"—"}</td></tr>`;}).join("");const expRows=(ev.eventExpenses||[]).map(e=>`<tr><td>${e.description||"—"}</td><td>${fmt(e.amount)}</td><td>${e.notes||"—"}</td></tr>`).join("");printContent(`Event — ${ev.name}`,`<div class="card"><h3>${ev.name}</h3><p>${ev.date}</p><div class="detail-grid" style="margin-top:10px;"><div class="detail-item"><div class="lbl">Collected</div><div class="val">${fmt(inc)}</div></div><div class="detail-item"><div class="lbl">Expenses</div><div class="val">${fmt(exp)}</div></div><div class="detail-item"><div class="lbl">Net</div><div class="val">${fmt(inc-exp)}</div></div></div></div>${payRows?`<h2>Student Payments</h2><table><thead><tr><th>Student</th><th>Amount</th><th>Notes</th></tr></thead><tbody>${payRows}</tbody></table>`:""}${expRows?`<h2>Expenses</h2><table><thead><tr><th>Description</th><th>Amount</th><th>Notes</th></tr></thead><tbody>${expRows}</tbody></table>`:""}`);}
   return <div>
     <SHdr title="Events" sub="Track per-event student collections and expenses" action={<Btn onClick={openAdd} color="teal">+ Add Event</Btn>}/>
     {events.length===0?<Empty icon="🎉" msg="No events yet."/>
     :<div style={{display:"flex",flexDirection:"column",gap:10}}>{[...events].sort((a,b)=>(b.date||"").localeCompare(a.date||"")).map(ev=>{
-      const inc=(ev.studentPayments||[]).reduce((s,p)=>s+(+p.amount||0),0);
-      const exp=(ev.eventExpenses||[]).reduce((s,e)=>s+(+e.amount||0),0);
-      const net=inc-exp;
+      const inc=(ev.studentPayments||[]).reduce((s,p)=>s+(+p.amount||0),0);const exp=(ev.eventExpenses||[]).reduce((s,e)=>s+(+e.amount||0),0);const net=inc-exp;
       return <Card key={ev.id} style={{padding:14}}>
         <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:10}}>
           <div><div style={{fontWeight:800,color:N,fontSize:14}}>{ev.name}</div>
@@ -1506,7 +1669,7 @@ function Events({events,setEvents,students}){
       </Card>;})}
     </div>}
     {modal&&<Modal title={editId?"Edit Event":"Add Event"} onClose={()=>setModal(false)}>
-      <FI label="Event Name" req value={form.name} onChange={e=>sf("name",e.target.value)} placeholder="e.g. Annual Sports Day"/>
+      <FI label="Event Name" req value={form.name} onChange={e=>sf("name",e.target.value)}/>
       <FI label="Event Date" req type="date" value={form.date} onChange={e=>sf("date",e.target.value)}/>
       <FTA label="Description (optional)" value={form.description} onChange={e=>sf("description",e.target.value)}/>
       <div style={{display:"flex",gap:10}}><Btn onClick={save} color="teal" style={{flex:1}}>{editId?"Update":"Create Event"}</Btn><Btn onClick={()=>setModal(false)} color="ghost">Cancel</Btn></div>
@@ -1520,11 +1683,11 @@ function Events({events,setEvents,students}){
       <div style={{marginBottom:16}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
           <p style={{fontSize:11,fontWeight:700,color:"#9ca3af",textTransform:"uppercase",letterSpacing:"0.06em",margin:0}}>Student Payments</p>
-          <Btn onClick={()=>{setPForm({studentId:"",amount:"",notes:""});setPayModal(ve.id);}} color="green" style={{padding:"5px 10px",fontSize:11}}>+ Add Payment</Btn>
+          <Btn onClick={()=>{setPForm({studentId:"",amount:"",notes:""});setPayModal(ve.id);}} color="green" style={{padding:"5px 10px",fontSize:11}}>+ Add</Btn>
         </div>
         {!(ve.studentPayments||[]).length?<p style={{fontSize:12,color:"#9ca3af"}}>No payments yet.</p>
         :<div style={{border:"1.5px solid #e5e7eb",borderRadius:10,overflow:"hidden"}}>{ve.studentPayments.map((p,i)=>{const st=students.find(s=>s.id===p.studentId);return <div key={p.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 12px",borderBottom:i<ve.studentPayments.length-1?"1px solid #f5f5f5":"none"}}>
-          <div><span style={{fontWeight:600,fontSize:12,color:"#1f2937"}}>{st?.name||"Unknown"}</span>{p.notes&&<span style={{fontSize:11,color:"#9ca3af",marginLeft:6}}>· {p.notes}</span>}</div>
+          <div><span style={{fontWeight:600,fontSize:12}}>{st?.name||"Unknown"}</span>{p.notes&&<span style={{fontSize:11,color:"#9ca3af",marginLeft:6}}>· {p.notes}</span>}</div>
           <div style={{display:"flex",alignItems:"center",gap:8}}><Badge color="green">{fmt(p.amount)}</Badge><button onClick={()=>removeStudentPay(ve.id,p.id)} style={{background:"none",border:"none",color:"#fca5a5",fontSize:16,fontWeight:700,cursor:"pointer"}}>×</button></div>
         </div>;})}
         </div>}
@@ -1532,11 +1695,11 @@ function Events({events,setEvents,students}){
       <div>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
           <p style={{fontSize:11,fontWeight:700,color:"#9ca3af",textTransform:"uppercase",letterSpacing:"0.06em",margin:0}}>Event Expenses</p>
-          <Btn onClick={()=>{setEForm({description:"",amount:"",notes:""});setExpModal(ve.id);}} color="red" style={{padding:"5px 10px",fontSize:11}}>+ Add Expense</Btn>
+          <Btn onClick={()=>{setEForm({description:"",amount:"",notes:""});setExpModal(ve.id);}} color="red" style={{padding:"5px 10px",fontSize:11}}>+ Add</Btn>
         </div>
         {!(ve.eventExpenses||[]).length?<p style={{fontSize:12,color:"#9ca3af"}}>No expenses yet.</p>
         :<div style={{border:"1.5px solid #e5e7eb",borderRadius:10,overflow:"hidden"}}>{ve.eventExpenses.map((e,i)=><div key={e.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 12px",borderBottom:i<ve.eventExpenses.length-1?"1px solid #f5f5f5":"none"}}>
-          <div><span style={{fontWeight:600,fontSize:12,color:"#1f2937"}}>{e.description||"Expense"}</span>{e.notes&&<span style={{fontSize:11,color:"#9ca3af",marginLeft:6}}>· {e.notes}</span>}</div>
+          <div><span style={{fontWeight:600,fontSize:12}}>{e.description||"Expense"}</span>{e.notes&&<span style={{fontSize:11,color:"#9ca3af",marginLeft:6}}>· {e.notes}</span>}</div>
           <div style={{display:"flex",alignItems:"center",gap:8}}><Badge color="red">{fmt(e.amount)}</Badge><button onClick={()=>removeEvExp(ve.id,e.id)} style={{background:"none",border:"none",color:"#fca5a5",fontSize:16,fontWeight:700,cursor:"pointer"}}>×</button></div>
         </div>)}
         </div>}
@@ -1549,7 +1712,7 @@ function Events({events,setEvents,students}){
       <div style={{display:"flex",gap:10}}><Btn onClick={()=>addStudentPay(payModal)} color="green" style={{flex:1}}>Add Payment</Btn><Btn onClick={()=>setPayModal(false)} color="ghost">Cancel</Btn></div>
     </Modal>}
     {expModal&&<Modal title="Add Event Expense" onClose={()=>setExpModal(false)}>
-      <FI label="Description" req value={eForm.description} onChange={e=>setEForm(p=>({...p,description:e.target.value}))} placeholder="e.g. Decoration, Sound System"/>
+      <FI label="Description" req value={eForm.description} onChange={e=>setEForm(p=>({...p,description:e.target.value}))}/>
       <FI label="Amount (৳)" req type="number" value={eForm.amount} onChange={e=>setEForm(p=>({...p,amount:e.target.value}))}/>
       <FTA label="Notes (optional)" value={eForm.notes} onChange={e=>setEForm(p=>({...p,notes:e.target.value}))}/>
       <div style={{display:"flex",gap:10}}><Btn onClick={()=>addEvExp(expModal)} color="red" style={{flex:1}}>Add Expense</Btn><Btn onClick={()=>setExpModal(false)} color="ghost">Cancel</Btn></div>
@@ -1567,10 +1730,7 @@ function Notices({notices,setNotices}){
   function openEdit(n){setEditId(n.id);setForm({...n});setModal(true);}
   function save(){if(!form.title.trim()||!form.body.trim())return alert("Title and content required.");if(editId)setNotices(p=>p.map(n=>n.id===editId?{...form,id:editId}:n));else setNotices(p=>[{...form,id:uid()},...p]);setModal(false);}
   function del(id){if(!window.confirm("Delete?"))return;setNotices(p=>p.filter(r=>r.id!==id));}
-  function handlePrint(){
-    const html=notices.map(n=>`<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;"><h3>${n.title}</h3>${n.type?`<span class="badge badge-blue">${n.type}</span>`:""}</div><p style="font-size:12px;line-height:1.6;color:#374151;">${n.body}</p><p style="font-size:10px;color:#9ca3af;margin-top:6px;">${n.date}</p></div>`).join("");
-    printContent("Notices",html);
-  }
+  function handlePrint(){const html=notices.map(n=>`<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;"><h3>${n.title}</h3>${n.type?`<span class="badge badge-blue">${n.type}</span>`:""}</div><p style="font-size:12px;line-height:1.6;color:#374151;">${n.body}</p><p style="font-size:10px;color:#9ca3af;margin-top:6px;">${n.date}</p></div>`).join("");printContent("Notices",html);}
   return <div>
     <SHdr title="Notices" sub="Internal notices and reminders" action={<div style={{display:"flex",gap:8}}><Btn onClick={handlePrint} color="ghost" style={{fontSize:12}}>🖨 Print All</Btn><Btn onClick={openAdd} color="teal">+ Add Notice</Btn></div>}/>
     {notices.length===0?<Empty icon="📌" msg="No notices yet."/>
@@ -1629,8 +1789,10 @@ function App(){
   const [events,setEventsR]=useState([]);
   const [results,setResultsR]=useState([]);
   const [settings,setSettingsR]=useState(DEF);
+  const [archivedStudents,setArchivedStudentsR]=useState([]);
+  const [archivedTeachers,setArchivedTeachersR]=useState([]);
 
-  useEffect(()=>{
+  function loadFromStorage(){
     setStudentsR(dbGet("ae_students",[]));
     setTeachersR(dbGet("ae_teachers",[]));
     setAttendR(dbGet("ae_attendance",[]));
@@ -1642,24 +1804,40 @@ function App(){
     setExpR(dbGet("ae_expenses",[]));
     setEventsR(dbGet("ae_events",[]));
     setResultsR(dbGet("ae_results",[]));
+    setArchivedStudentsR(dbGet("ae_archivedStudents",[]));
+    setArchivedTeachersR(dbGet("ae_archivedTeachers",[]));
     const cfg=dbGet("ae_settings",DEF);
     setSettingsR(cfg);
+    return cfg;
+  }
+
+  useEffect(()=>{
+    const cfg=loadFromStorage();
     setLoading(false);
     if(cfg?.classStart) setPage("adminAttendance");
   },[]);
 
-  const setStudents    =useCallback(fn=>{setStudentsR(prev=>{const next=typeof fn==="function"?fn(prev):fn;dbSet("ae_students",next);return next;});},[]);
-  const setTeachers    =useCallback(fn=>{setTeachersR(prev=>{const next=typeof fn==="function"?fn(prev):fn;dbSet("ae_teachers",next);return next;});},[]);
-  const setAttendance  =useCallback(fn=>{setAttendR(prev=>{const next=typeof fn==="function"?fn(prev):fn;dbSet("ae_attendance",next);return next;});},[]);
-  const setAdminAttendance=useCallback(fn=>{setAdminAttendR(prev=>{const next=typeof fn==="function"?fn(prev):fn;dbSet("ae_adminAttendance",next);return next;});},[]);
-  const setEnrollments =useCallback(fn=>{setEnrollR(prev=>{const next=typeof fn==="function"?fn(prev):fn;dbSet("ae_enrollments",next);return next;});},[]);
-  const setFeeRecords  =useCallback(fn=>{setFeeR(prev=>{const next=typeof fn==="function"?fn(prev):fn;dbSet("ae_fees",next);return next;});},[]);
-  const setNotices     =useCallback(fn=>{setNoticesR(prev=>{const next=typeof fn==="function"?fn(prev):fn;dbSet("ae_notices",next);return next;});},[]);
-  const setSideIncome  =useCallback(fn=>{setSideR(prev=>{const next=typeof fn==="function"?fn(prev):fn;dbSet("ae_sideIncome",next);return next;});},[]);
-  const setExpenses    =useCallback(fn=>{setExpR(prev=>{const next=typeof fn==="function"?fn(prev):fn;dbSet("ae_expenses",next);return next;});},[]);
-  const setEvents      =useCallback(fn=>{setEventsR(prev=>{const next=typeof fn==="function"?fn(prev):fn;dbSet("ae_events",next);return next;});},[]);
-  const setResults     =useCallback(fn=>{setResultsR(prev=>{const next=typeof fn==="function"?fn(prev):fn;dbSet("ae_results",next);return next;});},[]);
-  const setSettings    =useCallback(fn=>{setSettingsR(prev=>{const next=typeof fn==="function"?fn(prev):fn;dbSet("ae_settings",next);return next;});},[]);
+  // Called after pull from cloud — reloads all state from localStorage
+  function handleDataImport(){
+    loadFromStorage();
+    setPage("adminAttendance");
+  }
+
+  const mk=(key,setFn)=>useCallback(fn=>{setFn(prev=>{const next=typeof fn==="function"?fn(prev):fn;dbSet(key,next);return next;});},[]);
+  const setStudents    =mk("ae_students",setStudentsR);
+  const setTeachers    =mk("ae_teachers",setTeachersR);
+  const setAttendance  =mk("ae_attendance",setAttendR);
+  const setAdminAttendance=mk("ae_adminAttendance",setAdminAttendR);
+  const setEnrollments =mk("ae_enrollments",setEnrollR);
+  const setFeeRecords  =mk("ae_fees",setFeeR);
+  const setNotices     =mk("ae_notices",setNoticesR);
+  const setSideIncome  =mk("ae_sideIncome",setSideR);
+  const setExpenses    =mk("ae_expenses",setExpR);
+  const setEvents      =mk("ae_events",setEventsR);
+  const setResults     =mk("ae_results",setResultsR);
+  const setSettings    =mk("ae_settings",setSettingsR);
+  const setArchivedStudents=mk("ae_archivedStudents",setArchivedStudentsR);
+  const setArchivedTeachers=mk("ae_archivedTeachers",setArchivedTeachersR);
 
   if(loading) return <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"linear-gradient(135deg,#0c1445,#0f1e6b)"}}>
     <div style={{textAlign:"center"}}>
@@ -1700,11 +1878,11 @@ function App(){
       </header>
       <main style={{flex:1,overflowY:"auto",padding:"20px 14px"}}>
         <div style={{maxWidth:700,margin:"0 auto",width:"100%"}}>
-          {page==="settings"       &&<Settings settings={settings} setSettings={setSettings}/>}
+          {page==="settings"       &&<Settings settings={settings} setSettings={setSettings} onDataImport={handleDataImport}/>}
           {page==="adminAttendance"&&<AdminAttendance adminAttendance={adminAttendance} setAdminAttendance={setAdminAttendance} settings={settings}/>}
-          {page==="students"       &&<Students students={students} setStudents={setStudents} teachers={teachers} enrollments={enrollments} setEnrollments={setEnrollments} settings={settings} results={results}/>}
+          {page==="students"       &&<Students students={students} setStudents={setStudents} teachers={teachers} enrollments={enrollments} setEnrollments={setEnrollments} settings={settings} results={results} archivedStudents={archivedStudents} setArchivedStudents={setArchivedStudents}/>}
           {page==="courses"        &&<Courses students={students} teachers={teachers} enrollments={enrollments} settings={settings}/>}
-          {page==="teachers"       &&<Teachers teachers={teachers} setTeachers={setTeachers} students={students} enrollments={enrollments} setEnrollments={setEnrollments} settings={settings}/>}
+          {page==="teachers"       &&<Teachers teachers={teachers} setTeachers={setTeachers} students={students} enrollments={enrollments} setEnrollments={setEnrollments} settings={settings} archivedTeachers={archivedTeachers} setArchivedTeachers={setArchivedTeachers}/>}
           {page==="fees"           &&<Fees students={students} feeRecords={feeRecords} setFeeRecords={setFeeRecords} enrollments={enrollments} teachers={teachers} settings={settings}/>}
           {page==="teacherAttend"  &&<TeacherAttendance attendance={attendance} setAttendance={setAttendance} teachers={teachers} settings={settings}/>}
           {page==="results"        &&<Results results={results} setResults={setResults} students={students} teachers={teachers} settings={settings}/>}
