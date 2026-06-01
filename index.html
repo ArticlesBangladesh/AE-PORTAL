@@ -19,7 +19,9 @@ button{cursor:pointer;}
 @keyframes fadeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
 @keyframes spin{to{transform:rotate(360deg)}}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+@keyframes slideUp{from{opacity:0;transform:translateY(30px)}to{opacity:1;transform:translateY(0)}}
 .fade-in{animation:fadeIn .22s ease-out;}
+.slide-up{animation:slideUp .4s cubic-bezier(.16,1,.3,1) both;}
 .sidebar{position:fixed;top:0;left:0;height:100%;z-index:40;transition:transform .3s ease;transform:translateX(-100%);}
 .sidebar.open{transform:translateX(0);}
 @media(min-width:1024px){.sidebar{position:sticky;transform:translateX(0)!important;top:0;height:100vh;}.mobile-header{display:none!important;}.app-layout{flex-direction:row;}}
@@ -42,6 +44,7 @@ const {useState,useEffect,useCallback,useMemo,useRef} = React;
 // ── Storage ───────────────────────────────────────────────────────
 function dbGet(key,fb=null){try{const v=localStorage.getItem(key);return v?JSON.parse(v):fb;}catch{return fb;}}
 function dbSet(key,val){try{localStorage.setItem(key,JSON.stringify(val));}catch{}}
+function dbDel(key){try{localStorage.removeItem(key);}catch{}}
 
 // ── Constants ─────────────────────────────────────────────────────
 const MONTHS=["January","February","March","April","May","June","July","August","September","October","November","December"];
@@ -59,43 +62,252 @@ const blankSched=()=>{const s={};DAYS.forEach(d=>{s[d]={active:false,startTime:"
 // ── Colours ───────────────────────────────────────────────────────
 const N="#0c1445",AM="#f59e0b",GR="#059669",RE="#ef4444",TE="#0d9488",PU="#7c3aed";
 
-// ── Cloud Sync (JSONBin.io) ────────────────────────────────────────
-const SYNC_KEY="ae_cloudSync";
-const ALL_DATA_KEYS=["ae_students","ae_teachers","ae_attendance","ae_adminAttendance","ae_enrollments","ae_fees","ae_notices","ae_sideIncome","ae_expenses","ae_events","ae_results","ae_settings","ae_archivedStudents","ae_archivedTeachers"];
+// ── Auth & Cloud Storage Keys ─────────────────────────────────────
+const SESSION_KEY   = "ae_session";      // {username, apiKey, binId, loggedInAt}
+const SYNC_KEY      = "ae_cloudSync";    // legacy, kept for compat
+const ALL_DATA_KEYS = ["ae_students","ae_teachers","ae_attendance","ae_adminAttendance",
+  "ae_enrollments","ae_fees","ae_notices","ae_sideIncome","ae_expenses","ae_events",
+  "ae_results","ae_settings","ae_archivedStudents","ae_archivedTeachers"];
 
-async function pushToCloud(syncCfg){
-  if(!syncCfg?.apiKey||!syncCfg?.binId)throw new Error("No API key or Bin ID set.");
+// ── JSONBin helpers ───────────────────────────────────────────────
+async function jsonbinPut(apiKey,binId,payload){
+  const res=await fetch(`https://api.jsonbin.io/v3/b/${binId}`,{
+    method:"PUT",
+    headers:{"Content-Type":"application/json","X-Master-Key":apiKey},
+    body:JSON.stringify(payload)
+  });
+  if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.message||"Push failed");}
+  return res.json();
+}
+async function jsonbinGet(apiKey,binId){
+  const res=await fetch(`https://api.jsonbin.io/v3/b/${binId}/latest`,{
+    headers:{"X-Master-Key":apiKey}
+  });
+  if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.message||"Pull failed");}
+  const d=await res.json();return d.record;
+}
+async function jsonbinCreate(apiKey,name){
+  const res=await fetch("https://api.jsonbin.io/v3/b",{
+    method:"POST",
+    headers:{"Content-Type":"application/json","X-Master-Key":apiKey,"X-Bin-Name":name,"X-Bin-Private":"true"},
+    body:JSON.stringify({_init:true,_createdAt:new Date().toISOString()})
+  });
+  if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.message||"Create bin failed");}
+  const d=await res.json();return d.metadata.id;
+}
+async function jsonbinList(apiKey){
+  const res=await fetch("https://api.jsonbin.io/v3/b",{
+    headers:{"X-Master-Key":apiKey}
+  });
+  if(!res.ok)return[];
+  const d=await res.json();return d||[];
+}
+
+// ── Auth helpers ──────────────────────────────────────────────────
+// We store one "accounts bin" per API key. Username:password hashes + their binIds live there.
+// BIN name = "ARDENT-Accounts"
+const ACCOUNTS_BIN_KEY = "__ardent_accounts_bin__";
+
+function hashStr(str){
+  // Simple deterministic hash for username→bin lookup (not security-critical, just namespacing)
+  let h=5381;for(let i=0;i<str.length;i++)h=((h<<5)+h)+str.charCodeAt(i);
+  return(h>>>0).toString(36);
+}
+
+async function getOrCreateAccountsBin(apiKey){
+  // Try to find existing ARDENT-Accounts bin
+  const cached=dbGet(ACCOUNTS_BIN_KEY+hashStr(apiKey),null);
+  if(cached)return cached;
+  try{
+    const bins=await jsonbinList(apiKey);
+    const found=(bins.result||[]).find(b=>b.record?.name==="ARDENT-Accounts"||false);
+    if(found){dbSet(ACCOUNTS_BIN_KEY+hashStr(apiKey),found.id);return found.id;}
+  }catch{}
+  // Create new
+  const binId=await jsonbinCreate(apiKey,"ARDENT-Accounts");
+  await jsonbinPut(apiKey,binId,{name:"ARDENT-Accounts",users:{}});
+  dbSet(ACCOUNTS_BIN_KEY+hashStr(apiKey),binId);
+  return binId;
+}
+
+async function authLogin(apiKey,username,password){
+  const accBinId=await getOrCreateAccountsBin(apiKey);
+  const data=await jsonbinGet(apiKey,accBinId);
+  const users=data.users||{};
+  const uKey=username.toLowerCase().trim();
+  if(!users[uKey])throw new Error("Account not found. Please create an account first.");
+  const ph=hashStr(password+uKey+"ardent");
+  if(users[uKey].passwordHash!==ph)throw new Error("Incorrect password.");
+  return{username:uKey,apiKey,binId:users[uKey].dataBinId,accBinId};
+}
+
+async function authRegister(apiKey,username,password){
+  const accBinId=await getOrCreateAccountsBin(apiKey);
+  const data=await jsonbinGet(apiKey,accBinId);
+  const users=data.users||{};
+  const uKey=username.toLowerCase().trim();
+  if(users[uKey])throw new Error("Username already exists. Please log in.");
+  // Create a data bin for this user
+  const dataBinId=await jsonbinCreate(apiKey,`ARDENT-Data-${uKey}`);
+  const ph=hashStr(password+uKey+"ardent");
+  users[uKey]={passwordHash:ph,dataBinId,createdAt:new Date().toISOString()};
+  await jsonbinPut(apiKey,accBinId,{...data,users});
+  return{username:uKey,apiKey,binId:dataBinId,accBinId};
+}
+
+// ── ARDENT Logo SVG ───────────────────────────────────────────────
+// Replace the `src` attribute below with your logo PNG path or base64 data URI.
+// e.g. src="data:image/png;base64,iVBORw0KG..." or src="logo.png"
+// For now we show a beautiful SVG mark that you can swap out.
+const LOGO_SRC = null; // Set to your PNG URL/base64 to use a real image
+
+function ArdentLogo({size=38,showText=true,textColor="#fff",subColor="#fbbf24"}){
+  if(LOGO_SRC){
+    return <div style={{display:"flex",alignItems:"center",gap:10}}>
+      <img src={LOGO_SRC} alt="ARDENT" style={{height:size,width:"auto",objectFit:"contain"}}/>
+      {showText&&<div>
+        <div style={{fontSize:22,fontWeight:900,color:textColor,fontFamily:"'Playfair Display',serif",lineHeight:1,letterSpacing:"-0.5px"}}>ARDENT</div>
+        <div style={{fontSize:8,fontWeight:700,color:subColor,textTransform:"uppercase",letterSpacing:"0.25em"}}>Education</div>
+      </div>}
+    </div>;
+  }
+  // SVG Logo mark — swap with your image
+  return <div style={{display:"flex",alignItems:"center",gap:10}}>
+    <svg width={size} height={size} viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect width="40" height="40" rx="10" fill="#fbbf24"/>
+      <path d="M20 7L32 28H8L20 7Z" fill="#0c1445" opacity="0.15"/>
+      <path d="M20 10L30 27H10L20 10Z" fill="white"/>
+      <rect x="15" y="19" width="10" height="3" rx="1.5" fill="#0c1445"/>
+      <circle cx="20" cy="14" r="2" fill="#0c1445"/>
+    </svg>
+    {showText&&<div>
+      <div style={{fontSize:22,fontWeight:900,color:textColor,fontFamily:"'Playfair Display',serif",lineHeight:1,letterSpacing:"-0.5px"}}>ARDENT</div>
+      <div style={{fontSize:8,fontWeight:700,color:subColor,textTransform:"uppercase",letterSpacing:"0.25em"}}>Education</div>
+    </div>}
+  </div>;
+}
+
+// ── LOGIN SCREEN ──────────────────────────────────────────────────
+function LoginScreen({onLogin}){
+  const [mode,setMode]=useState("login"); // "login" | "register"
+  const [apiKey,setApiKey]=useState(()=>dbGet("ae_savedApiKey",""));
+  const [username,setUsername]=useState(()=>dbGet("ae_savedUsername",""));
+  const [password,setPassword]=useState("");
+  const [showKey,setShowKey]=useState(false);
+  const [showPass,setShowPass]=useState(false);
+  const [loading,setLoading]=useState(false);
+  const [error,setError]=useState("");
+  const [saveMe,setSaveMe]=useState(()=>!!dbGet("ae_savedUsername",""));
+
+  async function handleSubmit(){
+    setError("");
+    if(!apiKey.trim())return setError("JSONBin Master Key is required.");
+    if(!username.trim())return setError("Username is required.");
+    if(!password.trim())return setError("Password is required.");
+    if(mode==="register"&&password.length<6)return setError("Password must be at least 6 characters.");
+    setLoading(true);
+    try{
+      let session;
+      if(mode==="login")session=await authLogin(apiKey.trim(),username.trim(),password);
+      else session=await authRegister(apiKey.trim(),username.trim(),password);
+      // Save session
+      dbSet(SESSION_KEY,{...session,loggedInAt:new Date().toISOString()});
+      if(saveMe){dbSet("ae_savedApiKey",apiKey.trim());dbSet("ae_savedUsername",username.trim());}
+      else{dbDel("ae_savedApiKey");dbDel("ae_savedUsername");}
+      onLogin(session);
+    }catch(e){setError(e.message||"Something went wrong.");}
+    setLoading(false);
+  }
+
+  const IS2={width:"100%",border:"1.5px solid rgba(255,255,255,0.15)",borderRadius:12,padding:"12px 14px",fontSize:14,background:"rgba(255,255,255,0.08)",color:"#fff",outline:"none",transition:"border .2s,box-shadow .2s"};
+  const focIn=e=>{e.target.style.borderColor="#fbbf24";e.target.style.boxShadow="0 0 0 3px rgba(251,191,36,.15)";};
+  const focOut=e=>{e.target.style.borderColor="rgba(255,255,255,0.15)";e.target.style.boxShadow="none";};
+
+  return <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#0c1445 0%,#0f2060 50%,#0c1445 100%)",display:"flex",alignItems:"center",justifyContent:"center",padding:20,position:"relative",overflow:"hidden"}}>
+    {/* Background decoration */}
+    <div style={{position:"absolute",top:-100,right:-100,width:400,height:400,borderRadius:"50%",background:"radial-gradient(circle,rgba(251,191,36,0.08) 0%,transparent 70%)",pointerEvents:"none"}}/>
+    <div style={{position:"absolute",bottom:-150,left:-150,width:500,height:500,borderRadius:"50%",background:"radial-gradient(circle,rgba(99,102,241,0.08) 0%,transparent 70%)",pointerEvents:"none"}}/>
+
+    <div className="slide-up" style={{width:"100%",maxWidth:420,background:"rgba(255,255,255,0.05)",backdropFilter:"blur(20px)",border:"1px solid rgba(255,255,255,0.12)",borderRadius:24,padding:36,boxShadow:"0 30px 80px rgba(0,0,0,0.4)"}}>
+      {/* Logo */}
+      <div style={{textAlign:"center",marginBottom:32}}>
+        <div style={{display:"flex",justifyContent:"center",marginBottom:16}}>
+          <ArdentLogo size={52} showText={false}/>
+        </div>
+        <div style={{fontSize:32,fontWeight:900,color:"#fff",fontFamily:"'Playfair Display',serif",letterSpacing:"-1px",lineHeight:1}}>ARDENT</div>
+        <div style={{display:"flex",alignItems:"center",gap:8,justifyContent:"center",marginTop:6}}>
+          <div style={{flex:1,height:1,background:"rgba(251,191,36,0.3)"}}/>
+          <span style={{fontSize:10,fontWeight:700,color:"#fbbf24",textTransform:"uppercase",letterSpacing:"0.3em"}}>Education</span>
+          <div style={{flex:1,height:1,background:"rgba(251,191,36,0.3)"}}/>
+        </div>
+        <div style={{fontSize:13,color:"rgba(255,255,255,0.5)",marginTop:10}}>{mode==="login"?"Welcome back — sign in to continue":"Create your admin account"}</div>
+      </div>
+
+      {/* Mode toggle */}
+      <div style={{display:"flex",background:"rgba(255,255,255,0.06)",borderRadius:12,padding:4,marginBottom:24,gap:4}}>
+        {["login","register"].map(m=><button key={m} onClick={()=>{setMode(m);setError("");}} style={{flex:1,padding:"9px",borderRadius:9,border:"none",fontSize:13,fontWeight:700,cursor:"pointer",...(mode===m?{background:"#fbbf24",color:"#0c1445"}:{background:"transparent",color:"rgba(255,255,255,0.5)"})}}>
+          {m==="login"?"Sign In":"Create Account"}
+        </button>)}
+      </div>
+
+      {/* API Key */}
+      <div style={{marginBottom:14}}>
+        <label style={{display:"block",fontSize:11,fontWeight:700,color:"rgba(255,255,255,0.5)",textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:6}}>JSONBin Master Key</label>
+        <div style={{display:"flex",gap:6}}>
+          <input type={showKey?"text":"password"} value={apiKey} onChange={e=>setApiKey(e.target.value)} placeholder="$2b$10$..." style={{...IS2,flex:1,fontFamily:"monospace",fontSize:12}} onFocus={focIn} onBlur={focOut}/>
+          <button onClick={()=>setShowKey(p=>!p)} style={{padding:"10px 12px",borderRadius:10,border:"1.5px solid rgba(255,255,255,0.15)",background:"rgba(255,255,255,0.06)",color:"rgba(255,255,255,0.6)",fontSize:11,fontWeight:700,cursor:"pointer"}}>{showKey?"Hide":"Show"}</button>
+        </div>
+        <p style={{fontSize:10,color:"rgba(255,255,255,0.3)",marginTop:4}}>Get your Master Key from <a href="https://jsonbin.io" target="_blank" style={{color:"#fbbf24"}}>jsonbin.io</a> → API Keys</p>
+      </div>
+
+      {/* Username */}
+      <div style={{marginBottom:14}}>
+        <label style={{display:"block",fontSize:11,fontWeight:700,color:"rgba(255,255,255,0.5)",textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:6}}>Username</label>
+        <input type="text" value={username} onChange={e=>setUsername(e.target.value)} placeholder="e.g. admin" style={IS2} onFocus={focIn} onBlur={focOut} onKeyDown={e=>e.key==="Enter"&&handleSubmit()}/>
+      </div>
+
+      {/* Password */}
+      <div style={{marginBottom:20}}>
+        <label style={{display:"block",fontSize:11,fontWeight:700,color:"rgba(255,255,255,0.5)",textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:6}}>Password</label>
+        <div style={{display:"flex",gap:6}}>
+          <input type={showPass?"text":"password"} value={password} onChange={e=>setPassword(e.target.value)} placeholder="••••••••" style={{...IS2,flex:1}} onFocus={focIn} onBlur={focOut} onKeyDown={e=>e.key==="Enter"&&handleSubmit()}/>
+          <button onClick={()=>setShowPass(p=>!p)} style={{padding:"10px 12px",borderRadius:10,border:"1.5px solid rgba(255,255,255,0.15)",background:"rgba(255,255,255,0.06)",color:"rgba(255,255,255,0.6)",fontSize:11,fontWeight:700,cursor:"pointer"}}>{showPass?"Hide":"Show"}</button>
+        </div>
+      </div>
+
+      {/* Stay logged in */}
+      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:20,cursor:"pointer"}} onClick={()=>setSaveMe(p=>!p)}>
+        <div style={{width:20,height:20,borderRadius:6,border:`2px solid ${saveMe?"#fbbf24":"rgba(255,255,255,0.25)"}`,background:saveMe?"#fbbf24":"transparent",display:"flex",alignItems:"center",justifyContent:"center",transition:"all .2s",flexShrink:0}}>
+          {saveMe&&<svg width="11" height="8" viewBox="0 0 11 8" fill="none"><path d="M1 4L4 7L10 1" stroke="#0c1445" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+        </div>
+        <span style={{fontSize:13,color:"rgba(255,255,255,0.6)",fontWeight:600}}>Remember me on this device</span>
+      </div>
+
+      {error&&<div style={{background:"rgba(239,68,68,0.15)",border:"1px solid rgba(239,68,68,0.3)",borderRadius:10,padding:"10px 14px",fontSize:13,color:"#fca5a5",marginBottom:16,fontWeight:600}}>{error}</div>}
+
+      <button onClick={handleSubmit} disabled={loading} style={{width:"100%",padding:"13px",borderRadius:12,border:"none",background:loading?"rgba(251,191,36,0.4)":"#fbbf24",color:"#0c1445",fontWeight:800,fontSize:15,cursor:loading?"not-allowed":"pointer",transition:"all .2s"}}>
+        {loading?"Please wait…":mode==="login"?"Sign In →":"Create Account →"}
+      </button>
+
+      <div style={{marginTop:20,padding:"14px",background:"rgba(255,255,255,0.04)",borderRadius:12,border:"1px solid rgba(255,255,255,0.08)"}}>
+        <p style={{fontSize:11,color:"rgba(255,255,255,0.4)",lineHeight:1.6}}>
+          <b style={{color:"rgba(255,255,255,0.6)"}}>First time?</b> Go to <a href="https://jsonbin.io" target="_blank" style={{color:"#fbbf24"}}>jsonbin.io</a>, create a free account, copy your <b style={{color:"rgba(255,255,255,0.6)"}}>Master Key</b>, then choose a username & password here. Your data stays in your own JSONBin account.
+        </p>
+      </div>
+    </div>
+  </div>;
+}
+
+// ── Cloud Push/Pull for logged-in user ────────────────────────────
+async function pushUserData(session){
   const payload={};
   ALL_DATA_KEYS.forEach(k=>{payload[k]=dbGet(k,null);});
   payload._syncedAt=new Date().toISOString();
-  const res=await fetch(`https://api.jsonbin.io/v3/b/${syncCfg.binId}`,{
-    method:"PUT",
-    headers:{"Content-Type":"application/json","X-Master-Key":syncCfg.apiKey},
-    body:JSON.stringify(payload)
-  });
-  if(!res.ok){const e=await res.json();throw new Error(e.message||"Push failed");}
-  return await res.json();
+  payload._user=session.username;
+  return jsonbinPut(session.apiKey,session.binId,payload);
 }
-
-async function pullFromCloud(syncCfg){
-  if(!syncCfg?.apiKey||!syncCfg?.binId)throw new Error("No API key or Bin ID set.");
-  const res=await fetch(`https://api.jsonbin.io/v3/b/${syncCfg.binId}/latest`,{
-    headers:{"X-Master-Key":syncCfg.apiKey}
-  });
-  if(!res.ok){const e=await res.json();throw new Error(e.message||"Pull failed");}
-  const data=await res.json();
-  return data.record;
-}
-
-async function createNewBin(apiKey){
-  const res=await fetch("https://api.jsonbin.io/v3/b",{
-    method:"POST",
-    headers:{"Content-Type":"application/json","X-Master-Key":apiKey,"X-Bin-Name":"ARDENT-Education-Data","X-Bin-Private":"true"},
-    body:JSON.stringify({_init:true,_createdAt:new Date().toISOString()})
-  });
-  if(!res.ok){const e=await res.json();throw new Error(e.message||"Create bin failed");}
-  const data=await res.json();
-  return data.metadata.id;
+async function pullUserData(session){
+  return jsonbinGet(session.apiKey,session.binId);
 }
 
 // ── UI Primitives ─────────────────────────────────────────────────
@@ -243,31 +455,16 @@ function printContent(title, htmlContent) {
   setTimeout(()=>{win.print();},600);
 }
 
-// ── CLOUD SYNC COMPONENT ──────────────────────────────────────────
-function CloudSyncPanel({onDataImport}){
-  const [cfg,setCfg]=useState(()=>dbGet(SYNC_KEY,{apiKey:"",binId:""}));
+// ── CLOUD SYNC PANEL (in-app, for logged-in user) ─────────────────
+function CloudSyncPanel({session,onDataImport}){
   const [status,setStatus]=useState("");
   const [loading,setLoading]=useState(false);
-  const [showKey,setShowKey]=useState(false);
   const [lastSync,setLastSync]=useState(()=>dbGet("ae_lastSync",""));
-
-  function saveCfg(k,v){const next={...cfg,[k]:v};setCfg(next);dbSet(SYNC_KEY,next);}
-
-  async function handleCreateBin(){
-    if(!cfg.apiKey.trim())return alert("Enter your JSONBin Master Key first.");
-    setLoading(true);setStatus("Creating new bin…");
-    try{
-      const id=await createNewBin(cfg.apiKey.trim());
-      const next={...cfg,binId:id};setCfg(next);dbSet(SYNC_KEY,next);
-      setStatus("✅ New bin created! ID saved. Now click Push to Cloud.");
-    }catch(e){setStatus("❌ "+e.message);}
-    setLoading(false);
-  }
 
   async function handlePush(){
     setLoading(true);setStatus("Pushing to cloud…");
     try{
-      await pushToCloud(cfg);
+      await pushUserData(session);
       const ts=new Date().toLocaleString("en-BD");
       setLastSync(ts);dbSet("ae_lastSync",ts);
       setStatus("✅ Pushed successfully at "+ts);
@@ -279,7 +476,7 @@ function CloudSyncPanel({onDataImport}){
     if(!window.confirm("This will REPLACE all local data with cloud data. Continue?"))return;
     setLoading(true);setStatus("Pulling from cloud…");
     try{
-      const data=await pullFromCloud(cfg);
+      const data=await pullUserData(session);
       ALL_DATA_KEYS.forEach(k=>{if(data[k]!==undefined)dbSet(k,data[k]);});
       const ts=new Date().toLocaleString("en-BD");
       setLastSync(ts);dbSet("ae_lastSync",ts);
@@ -289,42 +486,18 @@ function CloudSyncPanel({onDataImport}){
     setLoading(false);
   }
 
-  const ready=!!(cfg.apiKey&&cfg.binId);
-
   return <Card style={{padding:18,marginBottom:14}}>
     <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
-      <div style={{width:8,height:8,borderRadius:"50%",background:ready?"#059669":"#d1d5db",animation:ready?"pulse 2s infinite":"none"}}/>
-      <p style={{fontSize:11,fontWeight:700,color:N,textTransform:"uppercase",letterSpacing:"0.06em",margin:0}}>☁️ Cloud Sync (Cross-Device)</p>
+      <div style={{width:8,height:8,borderRadius:"50%",background:"#059669",animation:"pulse 2s infinite"}}/>
+      <p style={{fontSize:11,fontWeight:700,color:N,textTransform:"uppercase",letterSpacing:"0.06em",margin:0}}>☁️ Cloud Sync</p>
       {lastSync&&<span style={{fontSize:10,color:"#9ca3af",marginLeft:"auto"}}>Last: {lastSync}</span>}
     </div>
-
     <InfoBox color="blue">
-      <b>How to set up:</b><br/>
-      1. Go to <a href="https://jsonbin.io" target="_blank" style={{color:"#1d4ed8"}}>jsonbin.io</a> → create a FREE account<br/>
-      2. Go to API Keys → copy your <b>Master Key</b><br/>
-      3. Paste it below → click <b>Create New Bin</b> (first time only)<br/>
-      4. After that: <b>Push</b> saves data to cloud, <b>Pull</b> loads it on any device
+      Logged in as <b>{session.username}</b>. Push saves all data to your JSONBin account. Pull loads it on any device you're logged into.
     </InfoBox>
-
-    <div style={{marginBottom:10}}>
-      <FL label="JSONBin Master Key"/>
-      <div style={{display:"flex",gap:6}}>
-        <input type={showKey?"text":"password"} value={cfg.apiKey} onChange={e=>saveCfg("apiKey",e.target.value)} placeholder="$2b$10$..." style={{...IS,flex:1,fontSize:12,fontFamily:"monospace"}} onFocus={focusIn} onBlur={focusOut}/>
-        <button onClick={()=>setShowKey(p=>!p)} style={{padding:"8px 10px",borderRadius:8,border:"1.5px solid #e5e7eb",background:"#f9fafb",fontSize:11,fontWeight:700,color:"#6b7280",cursor:"pointer"}}>{showKey?"Hide":"Show"}</button>
-      </div>
-    </div>
-    <div style={{marginBottom:12}}>
-      <FL label="Bin ID"/>
-      <div style={{display:"flex",gap:6}}>
-        <input type="text" value={cfg.binId} onChange={e=>saveCfg("binId",e.target.value)} placeholder="64abc123..." style={{...IS,flex:1,fontSize:12,fontFamily:"monospace"}} onFocus={focusIn} onBlur={focusOut}/>
-        <Btn onClick={handleCreateBin} color="ghost" disabled={loading} style={{fontSize:11,whiteSpace:"nowrap"}}>Create New Bin</Btn>
-      </div>
-      <p style={{fontSize:10,color:"#9ca3af",marginTop:4}}>First time: enter API key then click "Create New Bin". The ID will fill automatically.</p>
-    </div>
-
     <div style={{display:"flex",gap:8}}>
-      <Btn onClick={handlePush} color="navy" disabled={!ready||loading} style={{flex:1}}>⬆️ Push to Cloud</Btn>
-      <Btn onClick={handlePull} color="teal" disabled={!ready||loading} style={{flex:1}}>⬇️ Pull from Cloud</Btn>
+      <Btn onClick={handlePush} color="navy" disabled={loading} style={{flex:1}}>⬆️ Push to Cloud</Btn>
+      <Btn onClick={handlePull} color="teal" disabled={loading} style={{flex:1}}>⬇️ Pull from Cloud</Btn>
     </div>
     {status&&<div style={{marginTop:10,padding:"8px 12px",borderRadius:8,background:status.startsWith("✅")?"#f0fdf4":status.startsWith("❌")?"#fef2f2":"#fffbeb",color:status.startsWith("✅")?"#065f46":status.startsWith("❌")?"#991b1b":"#92400e",fontSize:12,fontWeight:600}}>{status}</div>}
     {loading&&<div style={{textAlign:"center",marginTop:8,fontSize:12,color:"#9ca3af"}}>⏳ Please wait…</div>}
@@ -332,7 +505,7 @@ function CloudSyncPanel({onDataImport}){
 }
 
 // ── SETTINGS ─────────────────────────────────────────────────────
-function Settings({settings,setSettings,onDataImport}){
+function Settings({settings,setSettings,session,onDataImport,onLogout}){
   const [form,setForm]=useState({classStart:"",subjects:[],paymentMethods:[],expenseCategories:[],centreName:"",contactNo:"",address:"",...settings});
   const [nSub,setNSub]=useState("");
   const [nPay,setNPay]=useState("");
@@ -380,7 +553,19 @@ function Settings({settings,setSettings,onDataImport}){
     {!settings.classStart&&<InfoBox>⚠️ <b>First-time setup:</b> Set admin check-in cutoff time and add subjects before adding data.</InfoBox>}
 
     {/* Cloud Sync */}
-    <CloudSyncPanel onDataImport={onDataImport}/>
+    <CloudSyncPanel session={session} onDataImport={onDataImport}/>
+
+    {/* Account section */}
+    <Card style={{padding:18,marginBottom:14,borderLeft:`4px solid ${AM}`}}>
+      <p style={{fontSize:11,fontWeight:700,color:AM,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:10}}>👤 Account</p>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10}}>
+        <div>
+          <div style={{fontWeight:700,color:N,fontSize:14}}>@{session.username}</div>
+          <div style={{fontSize:11,color:"#9ca3af",marginTop:2}}>Logged in · Data secured in your JSONBin account</div>
+        </div>
+        <Btn onClick={onLogout} color="ghost" style={{fontSize:12}}>🚪 Log Out</Btn>
+      </div>
+    </Card>
 
     <Card style={{padding:18,marginBottom:14}}>
       <p style={{fontSize:11,fontWeight:700,color:AM,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:12}}>⏰ Admin Attendance Cutoff</p>
@@ -593,7 +778,7 @@ function Students({students,setStudents,teachers,enrollments,setEnrollments,sett
   const [courseFilter,setCourseFilter]=useState("");
   const [subjectFilter,setSubjectFilter]=useState("");
   const [teacherFilter,setTeacherFilter]=useState("");
-  const [activeTab,setActiveTab]=useState("active"); // "active" | "alumni"
+  const [activeTab,setActiveTab]=useState("active");
   const [archiveModal,setArchiveModal]=useState(null);
   const [restoreModal,setRestoreModal]=useState(null);
 
@@ -658,16 +843,13 @@ function Students({students,setStudents,teachers,enrollments,setEnrollments,sett
     const archived={...student,archivedAt:today(),archiveReason:reason,originalEnrollments:enrollments.filter(e=>e.studentId===student.id)};
     setArchivedStudents(p=>[...(p||[]),archived]);
     setStudents(p=>p.filter(s=>s.id!==student.id));
-    // Keep enrollments in archived data but remove from active
     setEnrollments(p=>p.filter(e=>e.studentId!==student.id));
     setArchiveModal(null);
   }
 
   function doRestore(archived){
-    // Move back to active students
     const {archivedAt,archiveReason,originalEnrollments,...student}=archived;
     setStudents(p=>[...p,{...student,restoredAt:today(),previousArchiveReason:archiveReason}]);
-    // Restore their enrollments
     if(originalEnrollments?.length){
       setEnrollments(p=>[...p.filter(e=>e.studentId!==archived.id),...originalEnrollments]);
     }
@@ -718,7 +900,6 @@ function Students({students,setStudents,teachers,enrollments,setEnrollments,sett
       ${vs.notes?`<div class="card" style="margin-top:10px;"><b>Notes:</b> ${vs.notes}</div>`:""}`);
   }
 
-  // Tab bar
   const TabBtn=({id,label,count})=><button onClick={()=>setActiveTab(id)} style={{padding:"8px 16px",borderRadius:10,border:"none",cursor:"pointer",fontSize:13,fontWeight:700,...(activeTab===id?{background:N,color:"#fff"}:{background:"#f3f4f6",color:"#6b7280"})}}>
     {label} <span style={{fontSize:11,opacity:.7}}>({count})</span>
   </button>;
@@ -730,14 +911,12 @@ function Students({students,setStudents,teachers,enrollments,setEnrollments,sett
         <Btn onClick={openAdd}>+ Add Student</Btn>
       </div>}/>
 
-    {/* Tabs */}
     <div style={{display:"flex",gap:8,marginBottom:14}}>
       <TabBtn id="active" label="Active" count={students.length}/>
       <TabBtn id="alumni" label="📦 Alumni / Inactive" count={(archivedStudents||[]).length}/>
     </div>
 
     {activeTab==="active"&&<>
-      {/* Filter bar */}
       <Card style={{padding:14,marginBottom:14}}>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
           <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search name, ID, parent…" style={{...IS,fontSize:12}} onFocus={focusIn} onBlur={focusOut}/>
@@ -813,7 +992,6 @@ function Students({students,setStudents,teachers,enrollments,setEnrollments,sett
       </div>}
     </>}
 
-    {/* Modals */}
     {modal&&<Modal title={editId?"Edit Student":"Add New Student"} onClose={()=>setModal(false)} wide>
       <p style={{fontSize:11,color:"#9ca3af",marginBottom:14}}>All starred fields are required to save a student.</p>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 14px"}}>
@@ -1774,6 +1952,7 @@ const NAV=[
 const DEF={classStart:"",subjects:[],paymentMethods:[],expenseCategories:[],centreName:"ARDENT Education",contactNo:"",address:""};
 
 function App(){
+  const [session,setSession]=useState(()=>dbGet(SESSION_KEY,null));
   const [page,setPage]=useState("settings");
   const [sidebar,setSidebar]=useState(false);
   const [loading,setLoading]=useState(true);
@@ -1812,12 +1991,29 @@ function App(){
   }
 
   useEffect(()=>{
+    if(!session){setLoading(false);return;}
     const cfg=loadFromStorage();
     setLoading(false);
     if(cfg?.classStart) setPage("adminAttendance");
-  },[]);
+    else setPage("settings");
+  },[session]);
 
-  // Called after pull from cloud — reloads all state from localStorage
+  function handleLogin(sess){
+    setSession(sess);
+    // After login, load local data (or they can pull from cloud)
+    const cfg=loadFromStorage();
+    setLoading(false);
+    if(cfg?.classStart) setPage("adminAttendance");
+    else setPage("settings");
+  }
+
+  function handleLogout(){
+    if(!window.confirm("Log out? Make sure you pushed your data to cloud first."))return;
+    dbDel(SESSION_KEY);
+    setSession(null);
+    setPage("settings");
+  }
+
   function handleDataImport(){
     loadFromStorage();
     setPage("adminAttendance");
@@ -1839,26 +2035,31 @@ function App(){
   const setArchivedStudents=mk("ae_archivedStudents",setArchivedStudentsR);
   const setArchivedTeachers=mk("ae_archivedTeachers",setArchivedTeachersR);
 
+  // ── Loading Screen ─────────────────────────────────────────────
   if(loading) return <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"linear-gradient(135deg,#0c1445,#0f1e6b)"}}>
     <div style={{textAlign:"center"}}>
+      <div style={{display:"flex",justifyContent:"center",marginBottom:16}}><ArdentLogo size={60} showText={false}/></div>
       <div style={{fontSize:44,fontWeight:900,color:"#fff",fontFamily:"'Playfair Display',serif",letterSpacing:"-1px"}}>ARDENT</div>
       <div style={{color:"#fbbf24",letterSpacing:"0.3em",fontSize:12,fontWeight:700,textTransform:"uppercase",marginTop:4}}>Education</div>
       <div style={{display:"flex",gap:5,justifyContent:"center",marginTop:24}}>{[0,1,2].map(i=><div key={i} style={{width:7,height:7,borderRadius:"50%",background:"#fbbf24",animation:"bounce 1s infinite",animationDelay:`${i*0.15}s`}}/>)}</div>
     </div>
   </div>;
 
+  // ── Login Screen ───────────────────────────────────────────────
+  if(!session) return <LoginScreen onLogin={handleLogin}/>;
+
   const needsSetup=!settings.classStart;
 
   return <div className="app-layout" style={{minHeight:"100vh",display:"flex",background:"#f0f2f8"}}>
     <aside className={`sidebar${sidebar?" open":""}`} style={{width:230,background:"#0c1445",display:"flex",flexDirection:"column"}}>
-      <div style={{padding:"24px 18px 18px",borderBottom:"1px solid rgba(255,255,255,0.08)"}}>
-        <div style={{fontSize:10,fontWeight:700,color:"rgba(251,191,36,0.6)",textTransform:"uppercase",letterSpacing:"0.35em",marginBottom:8}}>Admin Portal</div>
-        <div style={{fontSize:24,fontWeight:900,color:"#fff",fontFamily:"'Playfair Display',serif",lineHeight:1}}>ARDENT</div>
-        <div style={{display:"flex",alignItems:"center",gap:7,marginTop:7}}>
-          <div style={{flex:1,height:1,background:"rgba(251,191,36,0.3)"}}/>
-          <div style={{fontSize:9,fontWeight:700,color:"#fbbf24",textTransform:"uppercase",letterSpacing:"0.2em"}}>Education</div>
-          <div style={{flex:1,height:1,background:"rgba(251,191,36,0.3)"}}/>
-        </div>
+      <div style={{padding:"20px 18px 16px",borderBottom:"1px solid rgba(255,255,255,0.08)"}}>
+        {/* Logo area — swap LOGO_SRC at top of file to use your PNG */}
+        <ArdentLogo size={36} showText={true} textColor="#fff" subColor="#fbbf24"/>
+      </div>
+      {/* Logged-in user pill */}
+      <div style={{padding:"8px 14px",borderBottom:"1px solid rgba(255,255,255,0.06)",display:"flex",alignItems:"center",gap:7}}>
+        <div style={{width:24,height:24,borderRadius:"50%",background:"#fbbf24",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800,color:"#0c1445",flexShrink:0}}>{(session.username||"?")[0].toUpperCase()}</div>
+        <span style={{fontSize:11,fontWeight:700,color:"rgba(255,255,255,0.6)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>@{session.username}</span>
       </div>
       <nav style={{flex:1,padding:"10px 8px",overflowY:"auto"}}>
         {NAV.map(n=><button key={n.id} onClick={()=>{setPage(n.id);setSidebar(false);}} style={{width:"100%",display:"flex",alignItems:"center",gap:9,padding:"8px 11px",borderRadius:10,border:"none",cursor:"pointer",fontSize:12,textAlign:"left",marginBottom:1,...(page===n.id?{background:"#fbbf24",color:"#0c1445",fontWeight:800}:{background:"transparent",color:"#c7d2fe",fontWeight:600})}}>
@@ -1866,7 +2067,9 @@ function App(){
           {n.id==="settings"&&needsSetup&&<span style={{width:6,height:6,borderRadius:"50%",background:"#f87171",flexShrink:0}}/>}
         </button>)}
       </nav>
-      <div style={{padding:"10px 18px",borderTop:"1px solid rgba(255,255,255,0.08)",fontSize:10,color:"rgba(255,255,255,0.35)",fontWeight:600}}>Data saved automatically</div>
+      <div style={{padding:"10px 14px",borderTop:"1px solid rgba(255,255,255,0.08)"}}>
+        <button onClick={handleLogout} style={{width:"100%",padding:"8px 12px",borderRadius:9,border:"1px solid rgba(255,255,255,0.12)",background:"transparent",color:"rgba(255,255,255,0.4)",fontSize:11,fontWeight:700,cursor:"pointer",textAlign:"left"}}>🚪 Log Out</button>
+      </div>
     </aside>
 
     {sidebar&&<div className="overlay show" onClick={()=>setSidebar(false)}/>}
@@ -1874,11 +2077,13 @@ function App(){
     <div style={{flex:1,display:"flex",flexDirection:"column",minWidth:0,overflow:"hidden"}}>
       <header className="mobile-header" style={{background:"#fff",borderBottom:"1px solid #e5e7eb",padding:"11px 14px",display:"flex",alignItems:"center",gap:10,position:"sticky",top:0,zIndex:20,boxShadow:"0 1px 3px rgba(0,0,0,0.06)"}}>
         <button onClick={()=>setSidebar(true)} style={{fontSize:20,fontWeight:900,color:N,background:"none",border:"none",cursor:"pointer"}}>☰</button>
-        <span style={{fontWeight:800,fontSize:17,color:N,fontFamily:"'Playfair Display',serif"}}>ARDENT Education</span>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <ArdentLogo size={28} showText={true} textColor={N} subColor={AM}/>
+        </div>
       </header>
       <main style={{flex:1,overflowY:"auto",padding:"20px 14px"}}>
         <div style={{maxWidth:700,margin:"0 auto",width:"100%"}}>
-          {page==="settings"       &&<Settings settings={settings} setSettings={setSettings} onDataImport={handleDataImport}/>}
+          {page==="settings"       &&<Settings settings={settings} setSettings={setSettings} session={session} onDataImport={handleDataImport} onLogout={handleLogout}/>}
           {page==="adminAttendance"&&<AdminAttendance adminAttendance={adminAttendance} setAdminAttendance={setAdminAttendance} settings={settings}/>}
           {page==="students"       &&<Students students={students} setStudents={setStudents} teachers={teachers} enrollments={enrollments} setEnrollments={setEnrollments} settings={settings} results={results} archivedStudents={archivedStudents} setArchivedStudents={setArchivedStudents}/>}
           {page==="courses"        &&<Courses students={students} teachers={teachers} enrollments={enrollments} settings={settings}/>}
