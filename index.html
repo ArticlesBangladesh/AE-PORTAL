@@ -624,7 +624,7 @@ function Students({students,onSave,onDelete,teachers,enrollments,onSaveEnrollmen
     if(!(form.enrolledSubjects||[]).length)return alert("Select at least one subject.");
     if(!(form.assignments||[]).length)return alert("Assign at least one teacher.");
     const sid=editId||uid();
-    const studentData={...form,id:sid,assignments:undefined};
+ const {assignments, ...studentData} = form;;
     await onSave(studentData);
     const newE=(form.assignments||[]).map(a=>({id:a.id||uid(),studentId:sid,teacherId:a.teacherId,subject:a.subject,subjectFee:a.subjectFee||0}));
     await onSaveEnrollments(sid,newE,enrollments);
