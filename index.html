@@ -82,6 +82,13 @@ const uid=()=>`${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
 const isLate=(ci,cs)=>!!ci&&!!cs&&ci>cs;
 const fmt=(n)=>`৳${(+n||0).toLocaleString()}`;
 const blankSched=()=>{const s={};DAYS.forEach(d=>{s[d]={active:false,startTime:""}});return s;};
+// Fee eligibility: a student only owes fees starting the month they joined.
+const isEligibleForMonth=(student,month)=>{
+  if(!student||!month)return true;
+  if(!student.joinDate)return true; // no join date on file — don't hide them
+  const joinYM=student.joinDate.slice(0,7);
+  return joinYM<=month;
+};
 
 // ── Colors ────────────────────────────────────────────────────────
 const N="#0c1445",AM="#f59e0b",GR="#059669",RE="#ef4444",TE="#0d9488",PU="#7c3aed";
@@ -149,11 +156,10 @@ async function fsSaveMany(username, col, items) {
 }
 
 // ── ARDENT Logo ───────────────────────────────────────────────────
-const LOGO_SRC = null;
-function ArdentLogo({size=38,showText=true,textColor="#fff",subColor="#fbbf24"}){
-  if(LOGO_SRC) return <div style={{display:"flex",alignItems:"center",gap:10}}>
-    <img src={LOGO_SRC} alt="ARDENT" style={{height:size,width:"auto",objectFit:"contain"}}/>
-    {showText&&<div><div style={{fontSize:22,fontWeight:900,color:textColor,fontFamily:"'Playfair Display',serif",lineHeight:1,letterSpacing:"-0.5px"}}>ARDENT</div><div style={{fontSize:8,fontWeight:700,color:subColor,textTransform:"uppercase",letterSpacing:"0.25em"}}>Education</div></div>}
+function ArdentLogo({size=38,showText=true,textColor="#fff",subColor="#fbbf24",logoSrc=null,name="OP"}){
+  if(logoSrc) return <div style={{display:"flex",alignItems:"center",gap:10}}>
+    <img src={logoSrc} alt={name} style={{height:size,maxWidth:size*2.4,width:"auto",objectFit:"contain"}}/>
+    {showText&&<div style={{fontSize:Math.round(size*0.58),fontWeight:900,color:textColor,fontFamily:"'Playfair Display',serif",lineHeight:1,letterSpacing:"-0.5px"}}>{name}</div>}
   </div>;
   return <div style={{display:"flex",alignItems:"center",gap:10}}>
     <svg width={size} height={size} viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -163,7 +169,7 @@ function ArdentLogo({size=38,showText=true,textColor="#fff",subColor="#fbbf24"})
       <rect x="15" y="19" width="10" height="3" rx="1.5" fill="#0c1445"/>
       <circle cx="20" cy="14" r="2" fill="#0c1445"/>
     </svg>
-    {showText&&<div><div style={{fontSize:22,fontWeight:900,color:textColor,fontFamily:"'Playfair Display',serif",lineHeight:1,letterSpacing:"-0.5px"}}>ARDENT</div><div style={{fontSize:8,fontWeight:700,color:subColor,textTransform:"uppercase",letterSpacing:"0.25em"}}>Education</div></div>}
+    {showText&&<div style={{fontSize:Math.round(size*0.58),fontWeight:900,color:textColor,fontFamily:"'Playfair Display',serif",lineHeight:1,letterSpacing:"-0.5px"}}>{name}</div>}
   </div>;
 }
 
@@ -204,10 +210,10 @@ function LoginScreen({onLogin}){
     <div className="slide-up" style={{width:"100%",maxWidth:420,background:"rgba(255,255,255,0.05)",backdropFilter:"blur(20px)",border:"1px solid rgba(255,255,255,0.12)",borderRadius:24,padding:36,boxShadow:"0 30px 80px rgba(0,0,0,0.4)"}}>
       <div style={{textAlign:"center",marginBottom:32}}>
         <div style={{display:"flex",justifyContent:"center",marginBottom:16}}><ArdentLogo size={52} showText={false}/></div>
-        <div style={{fontSize:32,fontWeight:900,color:"#fff",fontFamily:"'Playfair Display',serif",letterSpacing:"-1px",lineHeight:1}}>ARDENT</div>
+        <div style={{fontSize:32,fontWeight:900,color:"#fff",fontFamily:"'Playfair Display',serif",letterSpacing:"-1px",lineHeight:1}}>OP</div>
         <div style={{display:"flex",alignItems:"center",gap:8,justifyContent:"center",marginTop:6}}>
           <div style={{flex:1,height:1,background:"rgba(251,191,36,0.3)"}}/>
-          <span style={{fontSize:10,fontWeight:700,color:"#fbbf24",textTransform:"uppercase",letterSpacing:"0.3em"}}>Education</span>
+          <span style={{fontSize:10,fontWeight:700,color:"#fbbf24",textTransform:"uppercase",letterSpacing:"0.3em"}}>Admin Portal</span>
           <div style={{flex:1,height:1,background:"rgba(251,191,36,0.3)"}}/>
         </div>
         <div style={{fontSize:13,color:"rgba(255,255,255,0.5)",marginTop:10}}>{mode==="login"?"Welcome back — sign in to continue":"Create your admin account"}</div>
@@ -312,6 +318,9 @@ function SyncBadge({saving}){
   </div>;
 }
 
+// ── Print Branding (kept in sync from App settings) ───────────────
+let BRAND={name:"ARDENT Education",logo:null};
+
 // ── Weekly Schedule Editor ────────────────────────────────────────
 function WeeklyScheduleEditor({schedule,onChange}){
   const s=schedule||blankSched();
@@ -368,12 +377,12 @@ function SubjectFeeEditor({assignments,onChange,teachers,subjects}){
 // ── Print Helper ──────────────────────────────────────────────────
 function printContent(title,htmlContent){
   const win=window.open("","_blank");
-  win.document.write(`<!DOCTYPE html><html><head><title>${title} — ARDENT Education</title>
+  win.document.write(`<!DOCTYPE html><html><head><title>${title} — ${BRAND.name}</title>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700;800&family=Playfair+Display:wght@700;900&display=swap" rel="stylesheet"/>
   <style>*{box-sizing:border-box;margin:0;padding:0;}body{font-family:'DM Sans',sans-serif;color:#1f2937;padding:24px;background:#fff;}.print-header{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #0c1445;padding-bottom:14px;margin-bottom:20px;}.print-header h1{font-family:'Playfair Display',serif;font-size:26px;color:#0c1445;}.print-header .sub{font-size:12px;color:#6b7280;margin-top:3px;}.print-header .meta{text-align:right;font-size:11px;color:#6b7280;}table{width:100%;border-collapse:collapse;margin-bottom:16px;}th{background:#0c1445;color:#fff;padding:8px 10px;font-size:11px;text-align:left;font-weight:700;}td{padding:7px 10px;font-size:12px;border-bottom:1px solid #f0f0f0;}tr:nth-child(even) td{background:#f9fafb;}.badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:10px;font-weight:700;}.badge-green{background:#d1fae5;color:#065f46;}.badge-red{background:#fee2e2;color:#991b1b;}.badge-amber{background:#fef3c7;color:#92400e;}.badge-blue{background:#dbeafe;color:#1d4ed8;}.badge-gray{background:#f3f4f6;color:#374151;}.card{background:#f9fafb;border-radius:10px;padding:14px;margin-bottom:12px;border:1px solid #e5e7eb;}.card h3{font-size:14px;font-weight:800;color:#0c1445;margin-bottom:6px;}.detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;}.detail-item{background:#fff;border-radius:8px;padding:8px;border:1px solid #e5e7eb;}.detail-item .lbl{font-size:9px;font-weight:700;color:#9ca3af;text-transform:uppercase;letter-spacing:.06em;}.detail-item .val{font-size:13px;font-weight:700;color:#1f2937;margin-top:2px;}.footer{margin-top:24px;border-top:1px solid #e5e7eb;padding-top:10px;font-size:10px;color:#9ca3af;display:flex;justify-content:space-between;}h2{font-size:16px;font-weight:800;color:#0c1445;margin-bottom:10px;margin-top:16px;}@media print{body{padding:10px;}}</style></head><body>
-  <div class="print-header"><div><h1>ARDENT Education</h1><div class="sub">${title}</div></div><div class="meta">Printed: ${new Date().toLocaleString("en-BD")}</div></div>
+  <div class="print-header"><div>${BRAND.logo?`<img src="${BRAND.logo}" style="height:34px;margin-bottom:6px;display:block;"/>`:""}<h1>${BRAND.name}</h1><div class="sub">${title}</div></div><div class="meta">Printed: ${new Date().toLocaleString("en-BD")}</div></div>
   ${htmlContent}
-  <div class="footer"><span>ARDENT Education Admin Portal</span><span>Powered by Firebase</span></div>
+  <div class="footer"><span>${BRAND.name} Admin Portal</span><span>Powered by Firebase</span></div>
   </body></html>`);
   win.document.close();
   setTimeout(()=>win.print(),600);
@@ -394,12 +403,23 @@ function ArchiveModal({type,name,onConfirm,onClose}){
 
 // ── SETTINGS ──────────────────────────────────────────────────────
 function Settings({settings,onSave,session,onLogout,saving}){
-  const [form,setForm]=useState({classStart:"",subjects:[],paymentMethods:[],expenseCategories:[],centreName:"ARDENT Education",contactNo:"",address:"",...settings});
+  const [form,setForm]=useState({classStart:"",subjects:[],paymentMethods:[],expenseCategories:[],centreName:"ARDENT Education",contactNo:"",address:"",logoSrc:null,...settings});
   const [nSub,setNSub]=useState("");const [nPay,setNPay]=useState("");const [nCat,setNCat]=useState("");
 
-  useEffect(()=>{setForm({classStart:"",subjects:[],paymentMethods:[],expenseCategories:[],centreName:"ARDENT Education",contactNo:"",address:"",...settings});},[settings]);
+  useEffect(()=>{setForm({classStart:"",subjects:[],paymentMethods:[],expenseCategories:[],centreName:"ARDENT Education",contactNo:"",address:"",logoSrc:null,...settings});},[settings]);
 
   const sf=(k,v)=>setForm(p=>({...p,[k]:v}));
+
+  function handleLogoFile(e){
+    const file=e.target.files[0];
+    if(!file)return;
+    if(!file.type.startsWith("image/")) return alert("Please choose an image file.");
+    if(file.size>500*1024) return alert("Logo must be under 500KB. Please choose a smaller image.");
+    const reader=new FileReader();
+    reader.onload=()=>sf("logoSrc",reader.result);
+    reader.onerror=()=>alert("Could not read that file.");
+    reader.readAsDataURL(file);
+  }
 
   async function save(){
     if(!form.classStart)return alert("Class start time is required.");
@@ -446,6 +466,19 @@ function Settings({settings,onSave,session,onLogout,saving}){
     </Card>
 
     <Card style={{padding:18,marginBottom:14}}>
+      <p style={{fontSize:11,fontWeight:700,color:N,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:12}}>🖼️ Company Logo</p>
+      <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:4,flexWrap:"wrap"}}>
+        <div style={{width:64,height:64,borderRadius:12,background:"#f3f4f6",display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",border:"1.5px solid #e5e7eb",flexShrink:0}}>
+          {form.logoSrc?<img src={form.logoSrc} alt="Logo" style={{width:"100%",height:"100%",objectFit:"contain"}}/>:<span style={{fontSize:22}}>🏫</span>}
+        </div>
+        <div style={{flex:1,minWidth:180}}>
+          <input type="file" accept="image/*" onChange={handleLogoFile} style={{fontSize:12}}/>
+          <p style={{fontSize:11,color:"#9ca3af",marginTop:5}}>PNG or JPG, under 500KB. Shown on the sidebar, header, and printed reports.</p>
+          {form.logoSrc&&<button onClick={()=>sf("logoSrc",null)} style={{marginTop:6,fontSize:11,fontWeight:700,color:RE,background:"none",border:"none",cursor:"pointer"}}>Remove Logo</button>}
+        </div>
+      </div>
+    </Card>
+    <Card style={{padding:18,marginBottom:14}}>
       <p style={{fontSize:11,fontWeight:700,color:AM,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:12}}>⏰ Admin Attendance Cutoff</p>
       <FI label="Admin Must Check-In By (Late after this)" req type="time" value={form.classStart||""} onChange={e=>sf("classStart",e.target.value)}/>
     </Card>
@@ -484,9 +517,6 @@ function AdminAttendance({adminAttendance,onAdd,onEdit,settings}){
 
   const todayStr=today();
   const todayRec=adminAttendance.find(r=>r.date===todayStr);
-  const yest=new Date();yest.setDate(yest.getDate()-1);
-  const yestStr=yest.toISOString().split("T")[0];
-  const yestRec=adminAttendance.find(r=>r.date===yestStr);
 
   function calcStatus(checkIn){
     if(!checkIn)return"absent";
@@ -503,9 +533,10 @@ function AdminAttendance({adminAttendance,onAdd,onEdit,settings}){
     await onAdd(rec);
   }
 
-  async function saveYestEdit(checkIn,absent){
+  async function savePastEdit(date,checkIn,absent){
+    const existing=adminAttendance.find(r=>r.date===date);
     const status=absent?"absent":calcStatus(checkIn);
-    const rec={id:yestRec?.id||uid(),date:yestStr,checkIn:absent?"":checkIn,status,cutoff:CUTOFF,manualEdit:true};
+    const rec={id:existing?.id||uid(),date,checkIn:absent?"":checkIn,status,cutoff:CUTOFF,manualEdit:true};
     await onEdit(rec);
     setEditModal(null);
   }
@@ -539,17 +570,6 @@ function AdminAttendance({adminAttendance,onAdd,onEdit,settings}){
       </div>
     </Card>
 
-    <Card style={{padding:16,marginBottom:16,border:"1.5px dashed #e5e7eb"}}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-        <div>
-          <div style={{fontWeight:700,fontSize:13,color:N}}>Yesterday ({yestStr})</div>
-          {yestRec?<div style={{fontSize:12,color:"#6b7280",marginTop:2}}>Status: <b>{yestRec.status}</b> · {yestRec.checkIn||"Absent"}</div>
-          :<div style={{fontSize:12,color:RE,marginTop:2}}>No record</div>}
-        </div>
-        <Btn onClick={()=>setEditModal({date:yestStr,rec:yestRec})} color="amber" style={{fontSize:12,padding:"7px 13px"}}>{yestRec?"Edit Yesterday":"Add Yesterday"}</Btn>
-      </div>
-    </Card>
-
     <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:16}}>
       <StatCard label="On Time" value={total-lates-absents} icon="✅" from={GR} to="#047857"/>
       <StatCard label="Late Days" value={lates} icon="⚠️" from={AM} to="#b45309"/>
@@ -557,32 +577,48 @@ function AdminAttendance({adminAttendance,onAdd,onEdit,settings}){
     </div>
 
     <Card style={{padding:14}}>
-      <p style={{fontSize:11,fontWeight:700,color:"#9ca3af",textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:10}}>This Month</p>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,flexWrap:"wrap",gap:6}}>
+        <p style={{fontSize:11,fontWeight:700,color:"#9ca3af",textTransform:"uppercase",letterSpacing:"0.06em",margin:0}}>This Month</p>
+        <button onClick={()=>setEditModal({date:"",rec:null,isNew:true})} style={{fontSize:11,fontWeight:700,color:N,background:"none",border:"none",cursor:"pointer"}}>✏️ Add / Correct a Past Date</button>
+      </div>
       {monthRecs.length===0?<Empty icon="📅" msg="No records this month."/>
       :<div style={{display:"flex",flexDirection:"column",gap:6}}>
         {monthRecs.map(r=>{const[bg,fc,bc]=SC[r.status]||SC.absent;return <div key={r.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 12px",background:bg,border:`1px solid ${bc}`,borderRadius:10}}>
           <div><div style={{fontWeight:700,fontSize:12,color:fc}}>{r.date}{r.manualEdit?" ✏️":""}</div><div style={{fontSize:11,color:"#6b7280",marginTop:1}}>Check-in: {r.checkIn||"—"}</div></div>
-          <Badge color={r.status==="present"?"green":r.status==="late"?"amber":"red"}>{r.status}</Badge>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <Badge color={r.status==="present"?"green":r.status==="late"?"amber":"red"}>{r.status}</Badge>
+            {r.date!==todayStr&&<button onClick={()=>setEditModal({date:r.date,rec:r,isNew:false})} title="Edit this record" style={{background:"none",border:"none",color:"#9ca3af",fontSize:13,cursor:"pointer"}}>✏️</button>}
+          </div>
         </div>;})}
       </div>}
     </Card>
 
-    {editModal&&<Modal title={`Edit — ${editModal.date}`} onClose={()=>setEditModal(null)}>
-      <YestEditForm rec={editModal.rec} onSave={saveYestEdit} onClose={()=>setEditModal(null)}/>
+    {editModal&&<Modal title={editModal.isNew?"Add / Correct Past Attendance":`Edit — ${editModal.date}`} onClose={()=>setEditModal(null)}>
+      <PastEditForm rec={editModal.rec} initialDate={editModal.date} allowDateEdit={editModal.isNew} todayStr={todayStr} onSave={savePastEdit} onClose={()=>setEditModal(null)}/>
     </Modal>}
   </div>;
 }
 
-function YestEditForm({rec,onSave,onClose}){
+function PastEditForm({rec,initialDate,allowDateEdit,todayStr,onSave,onClose}){
+  const yest=new Date();yest.setDate(yest.getDate()-1);
+  const defaultDate=initialDate||yest.toISOString().split("T")[0];
+  const [date,setDate]=useState(defaultDate);
   const [absent,setAbsent]=useState(rec?.status==="absent"||false);
   const [checkIn,setCheckIn]=useState(rec?.checkIn||"");
+  function handleSave(){
+    if(!date)return alert("Select a date.");
+    if(date>=todayStr)return alert("Only past dates can be added or corrected here.");
+    if(!absent&&!checkIn)return alert("Enter a check-in time, or mark as absent.");
+    onSave(date,checkIn,absent);
+  }
   return <div>
+    {allowDateEdit&&<FI label="Date" req type="date" max={todayStr} value={date} onChange={e=>setDate(e.target.value)}/>}
     <div style={{display:"flex",gap:8,marginBottom:14}}>
       <button onClick={()=>setAbsent(false)} style={{flex:1,padding:"9px",borderRadius:10,border:`2px solid ${!absent?GR:"#e5e7eb"}`,background:!absent?"#f0fdf4":"#fff",color:!absent?GR:"#6b7280",fontWeight:700,fontSize:13,cursor:"pointer"}}>Present / Late</button>
       <button onClick={()=>setAbsent(true)} style={{flex:1,padding:"9px",borderRadius:10,border:`2px solid ${absent?RE:"#e5e7eb"}`,background:absent?"#fef2f2":"#fff",color:absent?RE:"#6b7280",fontWeight:700,fontSize:13,cursor:"pointer"}}>Absent</button>
     </div>
     {!absent&&<FI label="Check-In Time" req type="time" value={checkIn} onChange={e=>setCheckIn(e.target.value)}/>}
-    <div style={{display:"flex",gap:10}}><Btn onClick={()=>onSave(checkIn,absent)} color="amber" style={{flex:1}}>Save</Btn><Btn onClick={onClose} color="ghost">Cancel</Btn></div>
+    <div style={{display:"flex",gap:10}}><Btn onClick={handleSave} color="amber" style={{flex:1}}>Save</Btn><Btn onClick={onClose} color="ghost">Cancel</Btn></div>
   </div>;
 }
 
@@ -595,6 +631,7 @@ function Students({students,onSave,onDelete,teachers,enrollments,onSaveEnrollmen
   const [form,setForm]=useState(blank);const sf=(k,v)=>setForm(p=>({...p,[k]:v}));
 
   const allCourses=[...new Set(students.map(s=>s.course).filter(Boolean))];
+  const computedFee=(form.assignments||[]).reduce((s,a)=>s+(+a.subjectFee||0),0);
 
   const filtered=students.filter(s=>{
     const q=search.toLowerCase();
@@ -620,11 +657,13 @@ function Students({students,onSave,onDelete,teachers,enrollments,onSaveEnrollmen
     if(!form.studentId.trim())return alert("Student ID required.");
     if(!form.name.trim())return alert("Name required.");
     if(!form.course.trim())return alert("Course required.");
-    if(!form.monthlyFee||isNaN(+form.monthlyFee))return alert("Monthly fee required.");
     if(!(form.enrolledSubjects||[]).length)return alert("Select at least one subject.");
     if(!(form.assignments||[]).length)return alert("Assign at least one teacher.");
+    const totalFee=(form.assignments||[]).reduce((s,a)=>s+(+a.subjectFee||0),0);
+    if(totalFee<=0)return alert("Total fee must be greater than ৳0. Set a fee for each subject assignment above.");
     const sid=editId||uid();
- const {assignments, ...studentData} = form;;
+    const {assignments, monthlyFee, ...rest}=form;
+    const studentData={...rest,id:sid,monthlyFee:totalFee};
     await onSave(studentData);
     const newE=(form.assignments||[]).map(a=>({id:a.id||uid(),studentId:sid,teacherId:a.teacherId,subject:a.subject,subjectFee:a.subjectFee||0}));
     await onSaveEnrollments(sid,newE,enrollments);
@@ -715,8 +754,18 @@ function Students({students,onSave,onDelete,teachers,enrollments,onSaveEnrollmen
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 14px"}}>
         <FI label="Student ID" req value={form.studentId} onChange={e=>sf("studentId",e.target.value)} placeholder="e.g. STU-001"/>
         <FI label="Full Name" req value={form.name} onChange={e=>sf("name",e.target.value)}/>
-        <FI label="Course" req value={form.course} onChange={e=>sf("course",e.target.value)} placeholder="e.g. O Level"/>
-        <FI label="Monthly Fee (৳)" req type="number" value={form.monthlyFee} onChange={e=>sf("monthlyFee",e.target.value)}/>
+        <div style={{marginBottom:14}}>
+          <FL label="Course" req/>
+          <input list="course-options" value={form.course} onChange={e=>sf("course",e.target.value)} placeholder="Select existing or type a new course…" style={IS} onFocus={focusIn} onBlur={focusOut}/>
+          <datalist id="course-options">{allCourses.map(c=><option key={c} value={c}/>)}</datalist>
+        </div>
+        <div style={{marginBottom:14}}>
+          <FL label="Monthly Fee (৳)" req/>
+          <div style={{...IS,background:"#f0fdf4",border:"1.5px solid #a7f3d0",color:"#065f46",fontWeight:800,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+            <span>{fmt(computedFee)}</span>
+            <span style={{fontSize:10,fontWeight:700,color:"#059669",textTransform:"uppercase"}}>auto-calculated</span>
+          </div>
+        </div>
         <FI label="Contact" value={form.contact} onChange={e=>sf("contact",e.target.value)}/>
         <FI label="Joining Date" type="date" value={form.joinDate} onChange={e=>sf("joinDate",e.target.value)}/>
         <FI label="Parent Name" value={form.parentName} onChange={e=>sf("parentName",e.target.value)}/>
@@ -725,6 +774,7 @@ function Students({students,onSave,onDelete,teachers,enrollments,onSaveEnrollmen
       <FI label="Address" value={form.address} onChange={e=>sf("address",e.target.value)}/>
       <FM label="Enrolled Subjects" req options={settings.subjects||[]} selected={form.enrolledSubjects||[]} onChange={v=>sf("enrolledSubjects",v)}/>
       <SubjectFeeEditor assignments={form.assignments||[]} onChange={v=>sf("assignments",v)} teachers={teachers} subjects={settings.subjects||[]}/>
+      <InfoBox color="green">Monthly fee is calculated automatically from the subject/teacher fees above — it always matches, so there's no risk of a mismatch.</InfoBox>
       <FTA label="Notes" value={form.notes} onChange={e=>sf("notes",e.target.value)}/>
       <div style={{display:"flex",gap:10,marginTop:6}}><Btn onClick={save} style={{flex:1}}>{editId?"Update":"Add Student"}</Btn><Btn onClick={()=>setModal(false)} color="ghost">Cancel</Btn></div>
     </Modal>}
@@ -757,7 +807,9 @@ function Students({students,onSave,onDelete,teachers,enrollments,onSaveEnrollmen
 
 // ── COURSES VIEW ──────────────────────────────────────────────────
 function Courses({students,teachers,enrollments,settings}){
+  const [viewMode,setViewMode]=useState("course"); // "course" | "teacher"
   const [selCourse,setSelCourse]=useState("");const [selSubject,setSelSubject]=useState("");const [selTeacher,setSelTeacher]=useState("");
+  const [expandedTeacher,setExpandedTeacher]=useState(null);
   const allCourses=[...new Set(students.map(s=>s.course).filter(Boolean))];
   const filtered=students.filter(s=>{
     const matchCourse=!selCourse||(s.course||"")===selCourse;
@@ -768,51 +820,106 @@ function Courses({students,teachers,enrollments,settings}){
   const byCourse={};
   if(!selCourse&&!selSubject&&!selTeacher) filtered.forEach(s=>{const c=s.course||"No Course";if(!byCourse[c])byCourse[c]=[];byCourse[c].push(s);});
 
+  const TabBtn=({id,label})=><button onClick={()=>setViewMode(id)} style={{padding:"8px 16px",borderRadius:10,border:"none",cursor:"pointer",fontSize:13,fontWeight:700,...(viewMode===id?{background:N,color:"#fff"}:{background:"#f3f4f6",color:"#6b7280"})}}>{label}</button>;
+
   return <div>
     <SHdr title="Courses & Groups" sub="Browse students by course, subject, or teacher"/>
-    <Card style={{padding:14,marginBottom:16}}>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
-        <div><FL label="Course"/><select value={selCourse} onChange={e=>setSelCourse(e.target.value)} style={IS}><option value="">All Courses</option>{allCourses.map(c=><option key={c} value={c}>{c}</option>)}</select></div>
-        <div><FL label="Subject"/><select value={selSubject} onChange={e=>setSelSubject(e.target.value)} style={IS}><option value="">All Subjects</option>{(settings.subjects||[]).map(s=><option key={s} value={s}>{s}</option>)}</select></div>
-        <div><FL label="Teacher"/><select value={selTeacher} onChange={e=>setSelTeacher(e.target.value)} style={IS}><option value="">All Teachers</option>{teachers.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select></div>
-      </div>
-      {(selCourse||selSubject||selTeacher)&&<button onClick={()=>{setSelCourse("");setSelSubject("");setSelTeacher("");}} style={{fontSize:11,fontWeight:700,color:RE,background:"none",border:"none",cursor:"pointer",marginTop:8}}>✕ Clear</button>}
-    </Card>
-    {(selCourse||selSubject||selTeacher)?
-      <>
-        <div style={{fontSize:13,fontWeight:700,color:"#6b7280",marginBottom:10}}>Showing {filtered.length} student(s)</div>
-        {filtered.length===0?<Empty icon="🎓" msg="No students match."/>
-        :<div style={{display:"flex",flexDirection:"column",gap:8}}>
-          {filtered.map(s=>{const myE=enrollments.filter(e=>e.studentId===s.id&&(!selTeacher||e.teacherId===selTeacher)&&(!selSubject||e.subject===selSubject));return <Card key={s.id} style={{padding:12}}>
-            <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
-              <span style={{fontWeight:800,color:N,fontSize:13}}>{s.name}</span>
-              {s.studentId&&<Badge color="navy">{s.studentId}</Badge>}
-              {s.course&&<Badge color="purple">{s.course}</Badge>}
+
+    <div style={{display:"flex",gap:8,marginBottom:14}}>
+      <TabBtn id="course" label="📚 By Course"/>
+      <TabBtn id="teacher" label="👩‍🏫 By Teacher"/>
+    </div>
+
+    {viewMode==="course"&&<>
+      <Card style={{padding:14,marginBottom:16}}>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+          <div><FL label="Course"/><select value={selCourse} onChange={e=>setSelCourse(e.target.value)} style={IS}><option value="">All Courses</option>{allCourses.map(c=><option key={c} value={c}>{c}</option>)}</select></div>
+          <div><FL label="Subject"/><select value={selSubject} onChange={e=>setSelSubject(e.target.value)} style={IS}><option value="">All Subjects</option>{(settings.subjects||[]).map(s=><option key={s} value={s}>{s}</option>)}</select></div>
+          <div><FL label="Teacher"/><select value={selTeacher} onChange={e=>setSelTeacher(e.target.value)} style={IS}><option value="">All Teachers</option>{teachers.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select></div>
+        </div>
+        {(selCourse||selSubject||selTeacher)&&<button onClick={()=>{setSelCourse("");setSelSubject("");setSelTeacher("");}} style={{fontSize:11,fontWeight:700,color:RE,background:"none",border:"none",cursor:"pointer",marginTop:8}}>✕ Clear</button>}
+      </Card>
+      {(selCourse||selSubject||selTeacher)?
+        <>
+          <div style={{fontSize:13,fontWeight:700,color:"#6b7280",marginBottom:10}}>Showing {filtered.length} student(s)</div>
+          {filtered.length===0?<Empty icon="🎓" msg="No students match."/>
+          :<div style={{display:"flex",flexDirection:"column",gap:8}}>
+            {filtered.map(s=>{const myE=enrollments.filter(e=>e.studentId===s.id&&(!selTeacher||e.teacherId===selTeacher)&&(!selSubject||e.subject===selSubject));return <Card key={s.id} style={{padding:12}}>
+              <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+                <span style={{fontWeight:800,color:N,fontSize:13}}>{s.name}</span>
+                {s.studentId&&<Badge color="navy">{s.studentId}</Badge>}
+                {s.course&&<Badge color="purple">{s.course}</Badge>}
+              </div>
+              <div style={{display:"flex",flexWrap:"wrap",gap:3,marginTop:5}}>{myE.map(e=>{const t=teachers.find(t=>t.id===e.teacherId);return <span key={e.id} style={{fontSize:10,background:"#f0fdf4",color:"#065f46",border:"1px solid #a7f3d0",borderRadius:7,padding:"2px 7px",fontWeight:600}}>{e.subject} → {t?.name||"?"}</span>;})}</div>
+            </Card>;})}
+          </div>}
+        </>:
+        <>
+          {students.length===0?<Empty icon="📚" msg="No students enrolled yet."/>
+          :Object.entries(byCourse).sort(([a],[b])=>a.localeCompare(b)).map(([course,sts])=>(
+            <Card key={course} style={{padding:0,marginBottom:14,overflow:"hidden"}}>
+              <div style={{background:N,padding:"10px 16px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div style={{fontWeight:800,color:"#fff",fontSize:14}}>{course}</div>
+                <Badge color="amber">{sts.length} student{sts.length!==1?"s":""}</Badge>
+              </div>
+              <div style={{padding:"8px 0"}}>
+                {sts.map((s,i)=>{const myE=enrollments.filter(e=>e.studentId===s.id);return <div key={s.id} style={{padding:"8px 16px",borderBottom:i<sts.length-1?"1px solid #f5f5f5":"none"}}>
+                  <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+                    <span style={{fontWeight:700,color:N,fontSize:13}}>{s.name}</span>
+                    {s.studentId&&<Badge color="navy">{s.studentId}</Badge>}
+                    <div style={{display:"flex",flexWrap:"wrap",gap:2,marginLeft:4}}>{(s.enrolledSubjects||[]).map(sub=><Badge key={sub} color="blue">{sub}</Badge>)}</div>
+                  </div>
+                  {myE.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:2,marginTop:4}}>{myE.map(e=>{const t=teachers.find(t=>t.id===e.teacherId);return <span key={e.id} style={{fontSize:10,background:"#f0fdf4",color:"#065f46",border:"1px solid #a7f3d0",borderRadius:7,padding:"2px 7px",fontWeight:600}}>{e.subject} → {t?.name||"?"}</span>;})}</div>}
+                </div>;})}
+              </div>
+            </Card>))}
+        </>}
+    </>}
+
+    {viewMode==="teacher"&&<>
+      {teachers.length===0?<Empty icon="👩‍🏫" msg="No teachers yet."/>
+      :<div style={{display:"flex",flexDirection:"column",gap:10}}>
+        {teachers.map(t=>{
+          const myE=enrollments.filter(e=>e.teacherId===t.id);
+          const studentIds=[...new Set(myE.map(e=>e.studentId))];
+          const myStudents=students.filter(s=>studentIds.includes(s.id));
+          const courses=[...new Set(myStudents.map(s=>s.course).filter(Boolean))];
+          const subjectsTaught=[...new Set(myE.map(e=>e.subject))];
+          const totalFee=myE.reduce((s,e)=>s+(+e.subjectFee||0),0);
+          const expanded=expandedTeacher===t.id;
+          return <Card key={t.id} style={{padding:0,overflow:"hidden"}}>
+            <div onClick={()=>setExpandedTeacher(expanded?null:t.id)} style={{cursor:"pointer",padding:"14px 16px",display:"flex",justifyContent:"space-between",alignItems:"center",background:expanded?N:"#fff"}}>
+              <div>
+                <div style={{fontWeight:800,fontSize:14,color:expanded?"#fff":N}}>{t.name}</div>
+                <div style={{fontSize:11,color:expanded?"rgba(255,255,255,0.6)":"#9ca3af",marginTop:2}}>{t.contact||""}{t.qualification?` · ${t.qualification}`:""}</div>
+              </div>
+              <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                <Badge color={expanded?"amber":"navy"}>{myStudents.length} student{myStudents.length!==1?"s":""}</Badge>
+                <span style={{color:expanded?"#fff":"#9ca3af",fontSize:14}}>{expanded?"▲":"▼"}</span>
+              </div>
             </div>
-            <div style={{display:"flex",flexWrap:"wrap",gap:3,marginTop:5}}>{myE.map(e=>{const t=teachers.find(t=>t.id===e.teacherId);return <span key={e.id} style={{fontSize:10,background:"#f0fdf4",color:"#065f46",border:"1px solid #a7f3d0",borderRadius:7,padding:"2px 7px",fontWeight:600}}>{e.subject} → {t?.name||"?"}</span>;})}</div>
-          </Card>;})}
-        </div>}
-      </>:
-      <>
-        {students.length===0?<Empty icon="📚" msg="No students enrolled yet."/>
-        :Object.entries(byCourse).sort(([a],[b])=>a.localeCompare(b)).map(([course,sts])=>(
-          <Card key={course} style={{padding:0,marginBottom:14,overflow:"hidden"}}>
-            <div style={{background:N,padding:"10px 16px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-              <div style={{fontWeight:800,color:"#fff",fontSize:14}}>{course}</div>
-              <Badge color="amber">{sts.length} student{sts.length!==1?"s":""}</Badge>
-            </div>
-            <div style={{padding:"8px 0"}}>
-              {sts.map((s,i)=>{const myE=enrollments.filter(e=>e.studentId===s.id);return <div key={s.id} style={{padding:"8px 16px",borderBottom:i<sts.length-1?"1px solid #f5f5f5":"none"}}>
-                <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
-                  <span style={{fontWeight:700,color:N,fontSize:13}}>{s.name}</span>
-                  {s.studentId&&<Badge color="navy">{s.studentId}</Badge>}
-                  <div style={{display:"flex",flexWrap:"wrap",gap:2,marginLeft:4}}>{(s.enrolledSubjects||[]).map(sub=><Badge key={sub} color="blue">{sub}</Badge>)}</div>
+            {expanded&&<div style={{padding:16}}>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,marginBottom:14}}>
+                <StatCard label="Total Students" value={myStudents.length} icon="🎓" from={N} to="#1e3a8a"/>
+                <StatCard label="Courses" value={courses.length} icon="📚" from={PU} to="#6d28d9"/>
+                <StatCard label="Monthly Revenue" value={fmt(totalFee)} icon="💰" from={GR} to="#047857"/>
+              </div>
+              {subjectsTaught.length>0&&<div style={{marginBottom:10}}><div style={{fontSize:11,fontWeight:700,color:"#9ca3af",textTransform:"uppercase",marginBottom:5}}>Subjects Assigned</div><div style={{display:"flex",flexWrap:"wrap",gap:4}}>{subjectsTaught.map(s=><Badge key={s} color="teal">{s}</Badge>)}</div></div>}
+              {courses.length>0&&<div style={{marginBottom:14}}><div style={{fontSize:11,fontWeight:700,color:"#9ca3af",textTransform:"uppercase",marginBottom:5}}>Courses</div><div style={{display:"flex",flexWrap:"wrap",gap:4}}>{courses.map(c=><Badge key={c} color="purple">{c}</Badge>)}</div></div>}
+              {myStudents.length>0&&<>
+                <div style={{fontSize:11,fontWeight:700,color:"#9ca3af",textTransform:"uppercase",marginBottom:6}}>Students & Fees</div>
+                <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                  {myStudents.map(s=>{const se=myE.filter(e=>e.studentId===s.id);return <div key={s.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"7px 10px",background:"#f9fafb",borderRadius:8,flexWrap:"wrap",gap:4}}>
+                    <div><span style={{fontWeight:700,fontSize:12,color:N}}>{s.name}</span>{s.course&&<span style={{fontSize:11,color:"#9ca3af",marginLeft:6}}>· {s.course}</span>}</div>
+                    <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>{se.map(e=><Badge key={e.id} color="green">{e.subject}: {fmt(e.subjectFee)}</Badge>)}</div>
+                  </div>;})}
                 </div>
-                {myE.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:2,marginTop:4}}>{myE.map(e=>{const t=teachers.find(t=>t.id===e.teacherId);return <span key={e.id} style={{fontSize:10,background:"#f0fdf4",color:"#065f46",border:"1px solid #a7f3d0",borderRadius:7,padding:"2px 7px",fontWeight:600}}>{e.subject} → {t?.name||"?"}</span>;})}</div>}
-              </div>;})}
-            </div>
-          </Card>))}
-      </>}
+              </>}
+            </div>}
+          </Card>;
+        })}
+      </div>}
+    </>}
   </div>;
 }
 
@@ -952,9 +1059,10 @@ function Fees({students,feeRecords,onSave,onDelete,enrollments,teachers,settings
   const blank={studentId:"",month:thisMonth(),amountPaid:"",paidDate:today(),paymentMethod:"",notes:""};
   const [form,setForm]=useState(blank);const sf=(k,v)=>setForm(p=>({...p,[k]:v}));
   const monthOpts=useMemo(()=>{const o=[];const d=new Date();for(let i=0;i<18;i++){o.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`);d.setMonth(d.getMonth()-1);}return o;},[]);
+  const eligibleStudents=useMemo(()=>students.filter(st=>isEligibleForMonth(st,month)),[students,month]);
   const mRecs=feeRecords.filter(r=>r.month===month);
   const collected=mRecs.reduce((s,r)=>s+(+r.amountPaid||0),0);
-  const totalDue=students.reduce((s,st)=>s+(+st.monthlyFee||0),0);
+  const totalDue=eligibleStudents.reduce((s,st)=>s+(+st.monthlyFee||0),0);
   const pct=totalDue>0?Math.min(100,Math.round(collected/totalDue*100)):0;
 
   function openPay(st){setEditRecId(null);setForm({...blank,studentId:st.id,month,paymentMethod:(settings.paymentMethods||[])[0]||""});setModal(true);}
@@ -963,6 +1071,7 @@ function Fees({students,feeRecords,onSave,onDelete,enrollments,teachers,settings
   async function save(){
     if(!form.studentId||!form.amountPaid)return alert("Student and amount required.");
     const st=students.find(s=>s.id===form.studentId);
+    if(st&&!isEligibleForMonth(st,form.month))return alert(`${st.name} joined after ${mLabel(form.month)} and doesn't owe fees for that month.`);
     const due=+(st?.monthlyFee||0);
     const paid=+form.amountPaid;
     const status=due>0&&paid<due?"partial":"paid";
@@ -975,13 +1084,13 @@ function Fees({students,feeRecords,onSave,onDelete,enrollments,teachers,settings
   const histRecs=feeRecords.filter(r=>r.studentId===histId).sort((a,b)=>b.month.localeCompare(a.month));
 
   function handlePrint(){
-    const rows=students.map(st=>{const stRecs=mRecs.filter(r=>r.studentId===st.id);const totalPaid=stRecs.reduce((s,r)=>s+(+r.amountPaid||0),0);const due=+(st.monthlyFee||0);const remaining=Math.max(0,due-totalPaid);const isFullyPaid=due>0&&remaining===0;const hasPartial=totalPaid>0&&!isFullyPaid;const status=isFullyPaid?"Paid":hasPartial?"Partial":"Pending";
+    const rows=eligibleStudents.map(st=>{const stRecs=mRecs.filter(r=>r.studentId===st.id);const totalPaid=stRecs.reduce((s,r)=>s+(+r.amountPaid||0),0);const due=+(st.monthlyFee||0);const remaining=Math.max(0,due-totalPaid);const isFullyPaid=due>0&&remaining===0;const hasPartial=totalPaid>0&&!isFullyPaid;const status=isFullyPaid?"Paid":hasPartial?"Partial":"Pending";
     return `<tr><td>${st.studentId||"—"}</td><td><b>${st.name}</b></td><td>${fmt(due)}</td><td>${fmt(totalPaid)}</td><td>${fmt(remaining)}</td><td><span class="badge badge-${isFullyPaid?"green":hasPartial?"amber":"red"}">${status}</span></td></tr>`;}).join("");
     printContent(`Fee Collection — ${mLabel(month)}`,`<table><thead><tr><th>ID</th><th>Name</th><th>Due</th><th>Paid</th><th>Remaining</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>`);
   }
 
   return <div>
-    <SHdr title="Monthly Fees" sub="Track all student payments" action={<div style={{display:"flex",gap:8}}><Btn onClick={handlePrint} color="ghost" style={{fontSize:12}}>🖨 Print</Btn><Btn onClick={()=>{setEditRecId(null);setForm({...blank,month,paymentMethod:(settings.paymentMethods||[])[0]||""});setModal(true);}} color="green">+ Record Payment</Btn></div>}/>
+    <SHdr title="Monthly Fees" sub="Track all student payments — fees start the month a student joins" action={<div style={{display:"flex",gap:8}}><Btn onClick={handlePrint} color="ghost" style={{fontSize:12}}>🖨 Print</Btn><Btn onClick={()=>{setEditRecId(null);setForm({...blank,month,paymentMethod:(settings.paymentMethods||[])[0]||""});setModal(true);}} color="green">+ Record Payment</Btn></div>}/>
     <Card style={{padding:16,marginBottom:16}}>
       <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
         <div><FL label="Month"/><select value={month} onChange={e=>setMonth(e.target.value)} style={{...IS,width:"auto",fontWeight:700,color:N}}>{monthOpts.map(m=><option key={m} value={m}>{mLabel(m)}</option>)}</select></div>
@@ -991,11 +1100,12 @@ function Fees({students,feeRecords,onSave,onDelete,enrollments,teachers,settings
           <div><div style={{fontSize:18,fontWeight:800,color:"#374151"}}>{fmt(totalDue)}</div><div style={{fontSize:11,color:"#9ca3af"}}>Total Due</div></div>
         </div>
       </div>
-      {students.length>0&&<><div style={{marginTop:10,height:7,borderRadius:99,background:"#e5e7eb",overflow:"hidden"}}><div style={{height:"100%",borderRadius:99,background:GR,width:`${pct}%`,transition:"width .3s"}}/></div><div style={{fontSize:11,color:"#9ca3af",marginTop:3,textAlign:"right"}}>{pct}% collected</div></>}
+      {eligibleStudents.length>0&&<><div style={{marginTop:10,height:7,borderRadius:99,background:"#e5e7eb",overflow:"hidden"}}><div style={{height:"100%",borderRadius:99,background:GR,width:`${pct}%`,transition:"width .3s"}}/></div><div style={{fontSize:11,color:"#9ca3af",marginTop:3,textAlign:"right"}}>{pct}% collected</div></>}
     </Card>
     {students.length===0?<Empty icon="💰" msg="Add students first."/>
+    :eligibleStudents.length===0?<Empty icon="💰" msg={`No students owe fees for ${mLabel(month)} yet.`}/>
     :<div style={{display:"flex",flexDirection:"column",gap:10}}>
-      {students.map(st=>{const stRecs=mRecs.filter(r=>r.studentId===st.id).sort((a,b)=>b.paidDate.localeCompare(a.paidDate));const totalPaid=stRecs.reduce((s,r)=>s+(+r.amountPaid||0),0);const due=+(st.monthlyFee||0);const remaining=Math.max(0,due-totalPaid);const isFullyPaid=due>0&&remaining===0;const hasPartial=totalPaid>0&&!isFullyPaid;
+      {eligibleStudents.map(st=>{const stRecs=mRecs.filter(r=>r.studentId===st.id).sort((a,b)=>b.paidDate.localeCompare(a.paidDate));const totalPaid=stRecs.reduce((s,r)=>s+(+r.amountPaid||0),0);const due=+(st.monthlyFee||0);const remaining=Math.max(0,due-totalPaid);const isFullyPaid=due>0&&remaining===0;const hasPartial=totalPaid>0&&!isFullyPaid;
       return <Card key={st.id} style={{padding:14,borderLeft:`4px solid ${isFullyPaid?"#34d399":hasPartial?"#fbbf24":"#f0f0f0"}`}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10}}>
           <div style={{flex:1}}>
@@ -1024,7 +1134,7 @@ function Fees({students,feeRecords,onSave,onDelete,enrollments,teachers,settings
     </div>}
 
     {modal&&<Modal title="Record Fee Payment" onClose={()=>setModal(false)}>
-      {!editRecId&&<><FSel label="Student" req options={students.map(s=>({value:s.id,label:`${s.name}${s.studentId?` (${s.studentId})`:""}`}))} value={form.studentId} onChange={e=>sf("studentId",e.target.value)}/>
+      {!editRecId&&<><FSel label="Student" req options={students.filter(s=>isEligibleForMonth(s,form.month)).map(s=>({value:s.id,label:`${s.name}${s.studentId?` (${s.studentId})`:""}`}))} value={form.studentId} onChange={e=>sf("studentId",e.target.value)}/>
         <FSel label="Month" req options={monthOpts.map(m=>({value:m,label:mLabel(m)}))} value={form.month} onChange={e=>sf("month",e.target.value)}/></>}
       {form.studentId&&(()=>{const st=students.find(s=>s.id===form.studentId);const due=+(st?.monthlyFee||0);const alreadyPaid=feeRecords.filter(r=>r.studentId===form.studentId&&r.month===form.month).reduce((s,r)=>s+(+r.amountPaid||0),0);const remaining=Math.max(0,due-alreadyPaid);return remaining>0&&<InfoBox color="green">Remaining: <b>{fmt(remaining)}</b></InfoBox>;})()}
       <FI label="Amount (৳)" req type="number" value={form.amountPaid} onChange={e=>sf("amountPaid",e.target.value)}/>
@@ -1473,7 +1583,7 @@ const NAV=[
   {id:"settings",       label:"Settings",          icon:"⚙️"},
 ];
 
-const DEF_SETTINGS={classStart:"",subjects:[],paymentMethods:[],expenseCategories:[],centreName:"ARDENT Education",contactNo:"",address:""};
+const DEF_SETTINGS={classStart:"",subjects:[],paymentMethods:[],expenseCategories:[],centreName:"ARDENT Education",contactNo:"",address:"",logoSrc:null};
 
 // ── ROOT APP ──────────────────────────────────────────────────────
 function App(){
@@ -1498,6 +1608,13 @@ function App(){
   const [settings,setSettings]=useState(DEF_SETTINGS);
   const [archivedStudents,setArchivedStudents]=useState([]);
   const [archivedTeachers,setArchivedTeachers]=useState([]);
+
+  // Keep the print-branding + document title in sync with this user's settings
+  useEffect(()=>{
+    BRAND.name=settings.centreName||"ARDENT Education";
+    BRAND.logo=settings.logoSrc||null;
+    document.title=`${settings.centreName||"ARDENT Education"} — Admin Portal`;
+  },[settings.centreName,settings.logoSrc]);
 
   // Load all data from Firebase when session is available
   useEffect(()=>{
@@ -1628,9 +1745,8 @@ function App(){
   // ── Loading ───────────────────────────────────────────────────
   if(appLoading) return <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"linear-gradient(135deg,#0c1445,#0f1e6b)"}}>
     <div style={{textAlign:"center"}}>
-      <div style={{display:"flex",justifyContent:"center",marginBottom:16}}><ArdentLogo size={60} showText={false}/></div>
-      <div style={{fontSize:44,fontWeight:900,color:"#fff",fontFamily:"'Playfair Display',serif",letterSpacing:"-1px"}}>ARDENT</div>
-      <div style={{color:"#fbbf24",letterSpacing:"0.3em",fontSize:12,fontWeight:700,textTransform:"uppercase",marginTop:4}}>Education</div>
+      <div style={{display:"flex",justifyContent:"center",marginBottom:16}}><ArdentLogo size={60} showText={false} logoSrc={settings.logoSrc}/></div>
+      <div style={{fontSize:44,fontWeight:900,color:"#fff",fontFamily:"'Playfair Display',serif",letterSpacing:"-1px"}}>{settings.centreName||"OP"}</div>
       <div style={{display:"flex",gap:5,justifyContent:"center",marginTop:24}}>{[0,1,2].map(i=><div key={i} style={{width:7,height:7,borderRadius:"50%",background:"#fbbf24",animation:"bounce 1s infinite",animationDelay:`${i*0.15}s`}}/>)}</div>
       {session&&<div style={{color:"rgba(255,255,255,0.4)",fontSize:12,marginTop:16}}>Loading your data from Firebase…</div>}
     </div>
@@ -1644,7 +1760,7 @@ function App(){
     <SyncBadge saving={saving}/>
     <aside className={`sidebar${sidebar?" open":""}`} style={{width:230,background:"#0c1445",display:"flex",flexDirection:"column"}}>
       <div style={{padding:"20px 18px 16px",borderBottom:"1px solid rgba(255,255,255,0.08)"}}>
-        <ArdentLogo size={36} showText={true} textColor="#fff" subColor="#fbbf24"/>
+        <ArdentLogo size={36} showText={true} textColor="#fff" subColor="#fbbf24" logoSrc={settings.logoSrc} name={settings.centreName||"OP"}/>
       </div>
       <div style={{padding:"8px 14px",borderBottom:"1px solid rgba(255,255,255,0.06)",display:"flex",alignItems:"center",gap:7}}>
         <div style={{width:24,height:24,borderRadius:"50%",background:"#fbbf24",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800,color:"#0c1445",flexShrink:0}}>{(session.username||"?")[0].toUpperCase()}</div>
@@ -1667,7 +1783,7 @@ function App(){
     <div style={{flex:1,display:"flex",flexDirection:"column",minWidth:0,overflow:"hidden"}}>
       <header className="mobile-header" style={{background:"#fff",borderBottom:"1px solid #e5e7eb",padding:"11px 14px",display:"flex",alignItems:"center",gap:10,position:"sticky",top:0,zIndex:20,boxShadow:"0 1px 3px rgba(0,0,0,0.06)"}}>
         <button onClick={()=>setSidebar(true)} style={{fontSize:20,fontWeight:900,color:N,background:"none",border:"none",cursor:"pointer"}}>☰</button>
-        <ArdentLogo size={28} showText={true} textColor={N} subColor={AM}/>
+        <ArdentLogo size={28} showText={true} textColor={N} subColor={AM} logoSrc={settings.logoSrc} name={settings.centreName||"OP"}/>
       </header>
       <main style={{flex:1,overflowY:"auto",padding:"20px 14px"}}>
         <div style={{maxWidth:700,margin:"0 auto",width:"100%"}}>
